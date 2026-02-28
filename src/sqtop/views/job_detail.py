@@ -4,7 +4,8 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import ModalScreen
-from textual.widgets import Label, ScrollableContainer, Static
+from textual.containers import ScrollableContainer
+from textual.widgets import Label, Static
 
 from .detail import DetailView
 
