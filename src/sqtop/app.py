@@ -7,7 +7,6 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 
-from .views.command_palette import CommandPaletteScreen
 from .views.jobs import JobsView
 from .views.nodes import NodesView
 from .views.partitions import PartitionsView
@@ -25,7 +24,6 @@ class SqtopApp(App):
         Binding("1", "switch_tab('jobs')", "Jobs"),
         Binding("2", "switch_tab('nodes')", "Nodes"),
         Binding("3", "switch_tab('partitions')", "Partitions"),
-        Binding("ctrl+p", "command_palette", "Palette"),
         Binding("r", "refresh", "Refresh"),
         Binding("P", "save_screenshot", "Screenshot", show=False),
         Binding("S", "settings", "Settings", show=False),
@@ -99,21 +97,6 @@ class SqtopApp(App):
             self.notify(f"Saved screenshot: {path}", title="Screenshot")
         except Exception as exc:
             self.notify(f"Screenshot failed: {exc}", title="Screenshot", severity="error")
-
-    def action_command_palette(self) -> None:
-        def handle(action: str | None) -> None:
-            if action is None:
-                return
-            if action in {"jobs", "nodes", "partitions"}:
-                self.action_switch_tab(action)
-            elif action == "refresh":
-                self.action_refresh()
-            elif action == "settings":
-                self.action_settings()
-            elif action == "screenshot":
-                self.action_save_screenshot()
-
-        self.push_screen(CommandPaletteScreen(), handle)
 
     def set_refresh_interval(self, interval: float) -> None:
         self.interval = interval
