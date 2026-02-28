@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 from datetime import datetime
@@ -340,8 +341,17 @@ class JobsView(Static):
         command = self._attach_default_command.strip() or "$SHELL -l"
         if command == "$SHELL -l":
             shell = os.getenv("SHELL", "").strip()
-            return f"{shell} -l" if shell else "bash -l"
-        return command
+            shell_name = os.path.basename(shell) if shell else ""
+            command = f"{shell_name} -l" if shell_name else "bash -l"
+        try:
+            parts = shlex.split(command)
+        except ValueError:
+            return command
+        if not parts:
+            return "bash -l"
+        if parts[0].startswith("/"):
+            parts[0] = os.path.basename(parts[0])
+        return " ".join(shlex.quote(p) for p in parts)
 
     def _run_attach(self, job: Job, node_override: str | None = None) -> None:
         if not self._attach_enabled:
@@ -359,10 +369,11 @@ class JobsView(Static):
                 node = resolve_first_node(detail.get("NodeList", ""))
 
         try:
+            resolved_command = self._resolve_attach_command()
             command = build_attach_command(
                 job_id=job.job_id,
                 node=node or None,
-                default_command=self._resolve_attach_command(),
+                default_command=resolved_command,
                 extra_args=self._attach_extra_args,
             )
         except ValueError as exc:
@@ -374,11 +385,24 @@ class JobsView(Static):
             title="Attach",
             timeout=4,
         )
+        retried_with_bash = False
         with self.app.suspend():
             rc = run_attach_command(command)
+            if rc != 0 and resolved_command != "bash -l":
+                fallback = build_attach_command(
+                    job_id=job.job_id,
+                    node=node or None,
+                    default_command="bash -l",
+                    extra_args=self._attach_extra_args,
+                )
+                rc = run_attach_command(fallback)
+                retried_with_bash = True
 
         if rc == 0:
-            self.app.notify("Attach session ended", title="Attach")
+            message = "Attach session ended"
+            if retried_with_bash:
+                message += " (fallback shell: bash)"
+            self.app.notify(message, title="Attach")
         else:
             self.app.notify(f"Attach exited with code {rc}", title="Attach", severity="warning")
         self.refresh_data()
