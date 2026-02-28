@@ -6,6 +6,8 @@ from datetime import datetime
 
 from textual.app import ComposeResult
 from textual.widgets import DataTable, Label, Static
+
+from .widgets import CyclicDataTable
 from textual import work
 
 from ..slurm import Node, fetch_nodes
@@ -63,7 +65,7 @@ class NodesView(Static):
 
     def compose(self) -> ComposeResult:
         yield Label("", id="nodes-header")
-        yield DataTable(id="nodes-table", cursor_type="row", zebra_stripes=True)
+        yield CyclicDataTable(id="nodes-table", cursor_type="row", zebra_stripes=True)
 
     def on_mount(self) -> None:
         self._rebuild_columns(self.size.width)
@@ -84,7 +86,7 @@ class NodesView(Static):
 
     def _rebuild_columns(self, width: int) -> None:
         self._current_cols = _visible_cols(width)
-        table = self.query_one(DataTable)
+        table = self.query_one(CyclicDataTable)
         table.clear(columns=True)
         for name, col_width in self._current_cols:
             table.add_column(name, width=col_width)
@@ -117,7 +119,7 @@ class NodesView(Static):
         )
 
     def _render_rows(self, nodes: list[Node]) -> None:
-        table = self.query_one(DataTable)
+        table = self.query_one(CyclicDataTable)
         table.clear()
         for node in nodes:
             if not node.name:

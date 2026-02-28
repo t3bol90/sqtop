@@ -12,6 +12,7 @@ from textual import work
 from ..slurm import Job, fetch_jobs, fetch_log_paths
 from .job_actions import JobActionScreen
 from .log_viewer import LogViewerScreen
+from .widgets import CyclicDataTable
 
 _STATE_ORDER = {"COMPLETING": 0, "RUNNING": 1, "PENDING": 2}
 
@@ -67,7 +68,7 @@ class JobsView(Static):
 
     def compose(self) -> ComposeResult:
         yield Label("", id="jobs-header")
-        yield DataTable(id="jobs-table", cursor_type="row", zebra_stripes=True)
+        yield CyclicDataTable(id="jobs-table", cursor_type="row", zebra_stripes=True)
 
     def on_mount(self) -> None:
         self._rebuild_columns(self.size.width)
@@ -88,7 +89,7 @@ class JobsView(Static):
 
     def _rebuild_columns(self, width: int) -> None:
         self._current_cols = _visible_cols(width)
-        table = self.query_one(DataTable)
+        table = self.query_one(CyclicDataTable)
         table.clear(columns=True)
         for name, col_width in self._current_cols:
             table.add_column(name, width=col_width)
@@ -117,7 +118,7 @@ class JobsView(Static):
         )
 
     def _render_rows(self, jobs: list[Job]) -> None:
-        table = self.query_one(DataTable)
+        table = self.query_one(CyclicDataTable)
         saved_row = table.cursor_row
         table.clear()
         for job in jobs:
