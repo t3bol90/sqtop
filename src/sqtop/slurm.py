@@ -5,8 +5,7 @@ from __future__ import annotations
 import re
 import subprocess
 import shlex
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 
 def _run(cmd: str) -> str:
@@ -219,3 +218,42 @@ def tail_log_file(path: str, n: int = 200) -> str:
         return "(no log path)"
     result = _run(f"tail -n {n} {shlex.quote(path)}")
     return result if result else "(empty or file not found)"
+
+
+def resolve_first_node(nodelist_expr: str) -> str:
+    """Resolve the first node hostname from a Slurm NodeList expression."""
+    expr = (nodelist_expr or "").strip()
+    if not expr or expr == "(null)":
+        return ""
+
+    out = _run(f"scontrol show hostnames {shlex.quote(expr)}")
+    for line in out.splitlines():
+        host = line.strip()
+        if host:
+            return host
+
+    # Conservative fallback for unresolved compressed expressions.
+    return expr.split(",", 1)[0].strip()
+
+
+def build_attach_command(
+    job_id: str,
+    node: str | None,
+    default_command: str,
+    extra_args: str = "",
+) -> list[str]:
+    """Build interactive attach command for a running Slurm job."""
+    cmd = ["srun", "--pty", "--overlap"]
+    if extra_args.strip():
+        cmd.extend(shlex.split(extra_args))
+    cmd.extend(["--jobid", str(job_id)])
+    if node and node.strip():
+        cmd.extend(["-w", node.strip()])
+    cmd.extend(shlex.split(default_command))
+    return cmd
+
+
+def run_attach_command(cmd: list[str]) -> int:
+    """Run interactive attach command with inherited stdio."""
+    result = subprocess.run(cmd)
+    return result.returncode
