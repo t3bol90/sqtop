@@ -26,10 +26,11 @@ COLUMNS: list[tuple[str, int, int]] = [
     ("STATE",      12,   0),
     ("CPU%",       14,   0),
     ("CPUS A/T",   10,  60),
-    ("MEM FREE",   10,  60),
-    ("PARTITION",  12,  80),
-    ("MEM TOTAL",  10,  95),
-    ("LOAD",        8,  95),
+    ("GPU A/T",     9,  60),
+    ("MEM FREE",   10,  75),
+    ("PARTITION",  12,  90),
+    ("MEM TOTAL",  10, 105),
+    ("LOAD",        8, 105),
 ]
 
 
@@ -133,6 +134,13 @@ class NodesView(Static):
                     row.append(_cpu_bar(node.cpus_alloc, node.cpus_total))
                 elif name == "CPUS A/T":
                     row.append(f"{node.cpus_alloc}/{node.cpus_total}")
+                elif name == "GPU A/T":
+                    if node.gpu_total > 0:
+                        free = node.gpu_total - node.gpu_alloc
+                        color = "green" if free > 0 else "red"
+                        row.append(f"[{color}]{node.gpu_alloc}/{node.gpu_total}[/]")
+                    else:
+                        row.append("[dim]—[/]")
                 elif name == "MEM FREE":
                     row.append(f"{node.memory_free}M")
                 elif name == "PARTITION":

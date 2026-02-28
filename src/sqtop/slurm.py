@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import shlex
 from dataclasses import dataclass, field
@@ -72,6 +73,12 @@ def fetch_jobs() -> list[Job]:
 # Nodes (sinfo)
 # ---------------------------------------------------------------------------
 
+def _parse_gpu_count(gres_str: str) -> int:
+    """Extract GPU count from strings like 'gpu:4', 'gpu:a100:4', 'gpu:a100:4(IDX:0,1)'."""
+    m = re.search(r'\bgpu:(?:[^:,()\s]+:)?(\d+)', gres_str)
+    return int(m.group(1)) if m else 0
+
+
 @dataclass
 class Node:
     name: str
@@ -82,21 +89,39 @@ class Node:
     memory_total: str
     memory_free: str
     load: str = "N/A"
+    gpu_total: int = 0
+    gpu_alloc: int = 0
+
+
+def _fetch_gpus_alloc() -> dict[str, int]:
+    """Return {node_name: gpus_allocated} parsed from scontrol show nodes."""
+    out = _run("scontrol show nodes")
+    result: dict[str, int] = {}
+    node_name = ""
+    for token in out.split():
+        if token.startswith("NodeName="):
+            node_name = token.partition("=")[2]
+        elif token.startswith("GresUsed=") and node_name:
+            result[node_name] = _parse_gpu_count(token.partition("=")[2])
+    return result
 
 
 def fetch_nodes() -> list[Node]:
     """Return node info from sinfo."""
-    fmt = "%n|%T|%P|%c|%C|%m|%e|%O"
+    fmt = "%n|%T|%P|%c|%C|%m|%e|%O|%G"
     out = _run(f"sinfo --noheader -o '{fmt}'")
+    gpus_alloc = _fetch_gpus_alloc()
     nodes = []
     for line in out.strip().splitlines():
         parts = line.split("|")
-        if len(parts) < 8:
+        if len(parts) < 9:
             continue
         # %C = allocated/idle/other/total  e.g. "2/6/0/8"
         cpu_parts = parts[4].split("/")
+        gpu_total = _parse_gpu_count(parts[8])
+        name = parts[0]
         nodes.append(Node(
-            name=parts[0],
+            name=name,
             state=parts[1],
             partition=parts[2],
             cpus_total=cpu_parts[3] if len(cpu_parts) == 4 else parts[3],
@@ -104,6 +129,8 @@ def fetch_nodes() -> list[Node]:
             memory_total=parts[5],
             memory_free=parts[6],
             load=parts[7],
+            gpu_total=gpu_total,
+            gpu_alloc=gpus_alloc.get(name, 0) if gpu_total > 0 else 0,
         ))
     return nodes
 
