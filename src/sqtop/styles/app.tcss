@@ -61,6 +61,30 @@ NodesView {
     height: 1;
 }
 
+/* ── Partitions view ────────────────────────────────────── */
+
+PartitionsView {
+    height: 1fr;
+    padding: 0;
+}
+
+#partitions-header {
+    background: $panel;
+    color: $text;
+    padding: 0 1;
+    text-style: bold;
+    height: 1;
+}
+
+/* ── Search bar (jobs view) ──────────────────────────────── */
+
+#search-bar {
+    dock: bottom;
+    height: 3;
+    margin: 0 1;
+    border: tall $accent;
+}
+
 /* ── Header ─────────────────────────────────────────────── */
 
 Header {

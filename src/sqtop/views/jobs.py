@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from datetime import datetime
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.widgets import DataTable, Label, Static
+from textual.widgets import DataTable, Input, Label, Static
 from textual import work
 
 from ..slurm import Job, cancel_job, fetch_job_detail, fetch_jobs, fetch_log_paths
@@ -18,12 +20,36 @@ from .log_viewer import LogViewerScreen
 from .widgets import CyclicDataTable
 
 _STATE_ORDER = {"COMPLETING": 0, "RUNNING": 1, "PENDING": 2}
+_TERMINAL_STATES = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "PREEMPTED"}
 
 
 def _job_sort_key(job: Job) -> tuple:
     priority = _STATE_ORDER.get(job.state, 3)
     job_id = int(job.job_id) if job.job_id.isdigit() else 0
     return (priority, job_id)
+
+
+def _copy_to_clipboard(text: str) -> bool:
+    """Copy text to system clipboard. Returns True on success."""
+    try:
+        if sys.platform == "darwin":
+            subprocess.run(["pbcopy"], input=text.encode(), check=True, timeout=2)
+        elif sys.platform == "win32":
+            subprocess.run(["clip"], input=text.encode(), check=True, timeout=2)
+        else:
+            try:
+                subprocess.run(
+                    ["xclip", "-selection", "clipboard"],
+                    input=text.encode(), check=True, timeout=2,
+                )
+            except (FileNotFoundError, subprocess.CalledProcessError):
+                subprocess.run(
+                    ["xsel", "--clipboard", "--input"],
+                    input=text.encode(), check=True, timeout=2,
+                )
+        return True
+    except Exception:
+        return False
 
 
 STATE_COLORS = {
@@ -35,6 +61,13 @@ STATE_COLORS = {
     "TIMEOUT":   "magenta",
     "NODE_FAIL": "red",
     "PREEMPTED": "yellow",
+}
+
+# sort key functions keyed by column name
+_SORT_KEYS = {
+    "state":  lambda j: (j.state, int(j.job_id) if j.job_id.isdigit() else 0),
+    "time":   lambda j: j.time_used,
+    "cpus":   lambda j: int(j.num_cpus) if j.num_cpus.isdigit() else 0,
 }
 
 # (header, col_width, min_terminal_width_to_show)
@@ -62,6 +95,12 @@ class JobsView(Static):
     BINDINGS = [
         Binding("enter", "open_job", "Open job", show=True),
         Binding("u", "toggle_mine", "My jobs", show=True),
+        Binding("slash", "activate_search", "Search", show=True),
+        Binding("s", "sort_state", show=False),
+        Binding("t", "sort_time", show=False),
+        Binding("c", "sort_cpus", show=False),
+        Binding("y", "yank_job_id", "Copy ID", show=True),
+        Binding("w", "watch_job", "Watch", show=True),
     ]
 
     def __init__(self, interval: float = 2.0) -> None:
@@ -73,12 +112,21 @@ class JobsView(Static):
         self._fetching = False
         self._timer = None
         self._filter_mine: bool = False
+        self._search_query: str = ""
+        self._sort_col: str | None = None   # None = default state-priority sort
+        self._sort_reversed: bool = False
+        self._watched_states: dict[str, str] = {}  # job_id → last known state
 
     def compose(self) -> ComposeResult:
         yield Label("", id="jobs-header")
         yield CyclicDataTable(id="jobs-table", cursor_type="row", zebra_stripes=True)
+        yield Input(
+            placeholder="Filter by name / state / partition…  Esc to close",
+            id="search-bar",
+        )
 
     def on_mount(self) -> None:
+        self.query_one("#search-bar", Input).display = False
         self._rebuild_columns(self.size.width)
         self.refresh_data()
         self._timer = self.set_interval(self._interval, self.refresh_data)
@@ -113,28 +161,156 @@ class JobsView(Static):
         finally:
             self._fetching = False
 
+    # ── Actions ──────────────────────────────────────────────────────────────
+
     def action_toggle_mine(self) -> None:
         self._filter_mine = not self._filter_mine
         self._update_table(self._last_jobs_raw)
 
+    def action_activate_search(self) -> None:
+        bar = self.query_one("#search-bar", Input)
+        bar.display = True
+        bar.focus()
+
+    def _set_sort(self, col: str) -> None:
+        if self._sort_col == col:
+            self._sort_reversed = not self._sort_reversed
+        else:
+            self._sort_col = col
+            self._sort_reversed = False
+        self._update_table(self._last_jobs_raw)
+
+    def action_sort_state(self) -> None:
+        self._set_sort("state")
+
+    def action_sort_time(self) -> None:
+        self._set_sort("time")
+
+    def action_sort_cpus(self) -> None:
+        self._set_sort("cpus")
+
+    def action_yank_job_id(self) -> None:
+        table = self.query_one(CyclicDataTable)
+        row_idx = table.cursor_row
+        if row_idx >= len(self._last_jobs):
+            return
+        job = self._last_jobs[row_idx]
+        if _copy_to_clipboard(job.job_id):
+            self.app.notify(f"Copied: {job.job_id}", title="Clipboard")
+        else:
+            self.app.notify("Clipboard unavailable", severity="warning")
+
+    def action_watch_job(self) -> None:
+        table = self.query_one(CyclicDataTable)
+        row_idx = table.cursor_row
+        if row_idx >= len(self._last_jobs):
+            return
+        job = self._last_jobs[row_idx]
+        if job.job_id in self._watched_states:
+            del self._watched_states[job.job_id]
+            self.app.notify(f"Unwatched job {job.job_id}", title="Watch")
+        else:
+            self._watched_states[job.job_id] = job.state
+            self.app.notify(f"Watching job {job.job_id} ({job.name})", title="Watch")
+        self._render_rows(self._last_jobs)
+
+    # ── Input / key events ────────────────────────────────────────────────────
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "search-bar":
+            self._search_query = event.value
+            self._update_table(self._last_jobs_raw)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "search-bar":
+            self._dismiss_search()
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            bar = self.query_one("#search-bar", Input)
+            if bar.display:
+                self._dismiss_search()
+                event.stop()
+
+    def _dismiss_search(self) -> None:
+        bar = self.query_one("#search-bar", Input)
+        bar.display = False
+        bar.value = ""
+        self._search_query = ""
+        self._update_table(self._last_jobs_raw)
+        self.query_one(CyclicDataTable).focus()
+
+    # ── Data pipeline ────────────────────────────────────────────────────────
+
     def _update_table(self, jobs: list[Job]) -> None:
         self._last_jobs_raw = jobs
-        filtered = (
-            [j for j in jobs if j.user == os.getenv("USER", "")]
-            if self._filter_mine else jobs
-        )
-        self._last_jobs = sorted(filtered, key=_job_sort_key)
+        self._check_watched_jobs(jobs)
+
+        filtered = jobs
+        if self._filter_mine:
+            user = os.getenv("USER", "")
+            filtered = [j for j in filtered if j.user == user]
+        if self._search_query:
+            q = self._search_query.lower()
+            filtered = [
+                j for j in filtered
+                if q in j.name.lower() or q in j.state.lower() or q in j.partition.lower()
+            ]
+
+        if self._sort_col is None:
+            self._last_jobs = sorted(filtered, key=_job_sort_key)
+        else:
+            key_fn = _SORT_KEYS[self._sort_col]
+            self._last_jobs = sorted(filtered, key=key_fn, reverse=self._sort_reversed)
+
         self._render_rows(self._last_jobs)
+        self._update_header(jobs)
+
+    def _update_header(self, all_jobs: list[Job]) -> None:
         now = datetime.now().strftime("%H:%M:%S")
-        running = sum(1 for j in jobs if j.state == "RUNNING")
-        pending = sum(1 for j in jobs if j.state == "PENDING")
-        mine_tag = "  [cyan]· mine[/]" if self._filter_mine else ""
+        running = sum(1 for j in all_jobs if j.state == "RUNNING")
+        pending = sum(1 for j in all_jobs if j.state == "PENDING")
+
+        tags: list[str] = []
+        if self._filter_mine:
+            tags.append("[cyan]· mine[/]")
+        if self._search_query:
+            tags.append(f'[yellow]· "{self._search_query}"[/]')
+        if self._sort_col is not None:
+            arrow = "↑" if self._sort_reversed else "↓"
+            tags.append(f"[dim]sort:{self._sort_col}{arrow}[/]")
+        if self._watched_states:
+            tags.append(f"[magenta]· {len(self._watched_states)} watched[/]")
+
+        suffix = ("  " + "  ".join(tags)) if tags else ""
         self.query_one("#jobs-header", Label).update(
             f"[b]squeue[/b]  [green]{running} running[/]  "
             f"[yellow]{pending} pending[/]  "
-            f"[dim]{len(jobs)} total  updated {now}[/]"
-            f"{mine_tag}"
+            f"[dim]{len(all_jobs)} total  updated {now}[/]"
+            f"{suffix}"
         )
+
+    def _check_watched_jobs(self, jobs: list[Job]) -> None:
+        if not self._watched_states:
+            return
+        current = {j.job_id: j.state for j in jobs}
+        finished = []
+        for job_id, last_state in self._watched_states.items():
+            cur = current.get(job_id)
+            if cur is None or cur in _TERMINAL_STATES:
+                state_str = cur if cur else "gone from queue"
+                self.app.bell()
+                self.app.notify(
+                    f"Job {job_id} → {state_str}",
+                    title="Job finished",
+                    severity="information",
+                    timeout=10,
+                )
+                finished.append(job_id)
+            elif cur != last_state:
+                self._watched_states[job_id] = cur
+        for job_id in finished:
+            del self._watched_states[job_id]
 
     def _render_rows(self, jobs: list[Job]) -> None:
         table = self.query_one(CyclicDataTable)
@@ -142,10 +318,11 @@ class JobsView(Static):
         table.clear()
         for job in jobs:
             color = STATE_COLORS.get(job.state, "white")
+            watched_prefix = "★ " if job.job_id in self._watched_states else ""
             row = []
             for name, _ in self._current_cols:
                 if name == "JOBID":
-                    row.append(f"[{color}]{job.job_id}[/]")
+                    row.append(f"[{color}]{watched_prefix}{job.job_id}[/]")
                 elif name == "NAME":
                     row.append(f"[{color}]{job.name}[/]")
                 elif name == "STATE":
