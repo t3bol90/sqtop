@@ -39,6 +39,7 @@ class SqtopApp(App):
     def on_mount(self) -> None:
         self.theme = self._saved_theme
         self.sub_title = "Slurm Dashboard"
+        self.call_after_refresh(self._focus_table_for_tab, "jobs")
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -53,6 +54,21 @@ class SqtopApp(App):
 
     def action_switch_tab(self, tab_id: str) -> None:
         self.query_one(TabbedContent).active = tab_id
+        self.call_after_refresh(self._focus_table_for_tab, tab_id)
+
+    def _focus_table_for_tab(self, tab_id: str) -> None:
+        table_id = {
+            "jobs": "#jobs-table",
+            "nodes": "#nodes-table",
+            "partitions": "#partitions-table",
+        }.get(tab_id)
+        if not table_id:
+            return
+        try:
+            self.query_one(table_id).focus()
+        except Exception:
+            # Ignore focus races during startup/resizes.
+            return
 
     def action_refresh(self) -> None:
         for view in self.query("JobsView, NodesView, PartitionsView"):
