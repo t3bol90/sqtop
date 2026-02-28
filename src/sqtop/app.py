@@ -25,6 +25,7 @@ class SqtopApp(App):
         Binding("2", "switch_tab('nodes')", "Nodes"),
         Binding("3", "switch_tab('partitions')", "Partitions"),
         Binding("r", "refresh", "Refresh"),
+        Binding("P", "save_screenshot", "Screenshot"),
         Binding("S", "settings", "Settings"),
     ]
 
@@ -76,6 +77,15 @@ class SqtopApp(App):
 
     def action_settings(self) -> None:
         self.push_screen(SettingsScreen(self.theme, self.interval))
+
+    def action_save_screenshot(self) -> None:
+        screenshot_dir = Path.home() / ".cache" / "sqtop" / "screenshots"
+        screenshot_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            path = self.save_screenshot(path=str(screenshot_dir))
+            self.notify(f"Saved screenshot: {path}", title="Screenshot")
+        except Exception as exc:
+            self.notify(f"Screenshot failed: {exc}", title="Screenshot", severity="error")
 
     def set_refresh_interval(self, interval: float) -> None:
         self.interval = interval

@@ -83,6 +83,7 @@ Attach behavior:
 | `2` | Nodes tab |
 | `3` | Partitions tab |
 | `r` | Refresh all tabs |
+| `Shift+P` | Save screenshot to `~/.cache/sqtop/screenshots` |
 | `S` | Open settings |
 | `q` | Quit |
 
