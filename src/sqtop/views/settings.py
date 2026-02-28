@@ -7,6 +7,8 @@ from textual.binding import Binding
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, RadioButton, RadioSet, Static
 
+from .. import config
+
 
 THEMES = [
     "dracula",
@@ -84,13 +86,14 @@ class SettingsScreen(ModalScreen[None]):
     def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
         radio_set_id = event.radio_set.id
         label = str(event.pressed.label)
+        app = self.app  # type: ignore[attr-defined]
 
         if radio_set_id == "theme-picker":
-            self.app.theme = label  # type: ignore[attr-defined]
-
+            app.theme = label
         elif radio_set_id == "interval-picker":
-            secs = float(label.removesuffix("s"))
-            self.app.set_refresh_interval(secs)  # type: ignore[attr-defined]
+            app.set_refresh_interval(float(label.removesuffix("s")))
+
+        config.save(app.theme, app.interval)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss()

@@ -10,9 +10,7 @@ from textual.widgets import Footer, Header, TabbedContent, TabPane
 from .views.jobs import JobsView
 from .views.nodes import NodesView
 from .views.settings import SettingsScreen
-
-DEFAULT_THEME = "dracula"
-DEFAULT_INTERVAL = 2.0
+from . import config
 
 
 class SqtopApp(App):
@@ -32,10 +30,12 @@ class SqtopApp(App):
 
     def __init__(self) -> None:
         super().__init__()
-        self.interval = DEFAULT_INTERVAL
+        cfg = config.load()
+        self.interval = cfg["interval"]
+        self._saved_theme = cfg["theme"]
 
     def on_mount(self) -> None:
-        self.theme = DEFAULT_THEME
+        self.theme = self._saved_theme
         self.sub_title = "Slurm Dashboard"
 
     def compose(self) -> ComposeResult:
