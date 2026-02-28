@@ -1,63 +1,89 @@
-# sqtop — Slurm TUI Dashboard
+# sqtop
 
-A rich, interactive TUI for monitoring Slurm clusters — like `htop`, but for SLURM.
+`sqtop` is a TUI dashboard for Slurm clusters.
 
-## Features
+![](assets/demo.png)
 
-- **Jobs tab** (`1`) — live `squeue`-style table, color-coded by job state
-- **Nodes tab** (`2`) — live `sinfo`-style table with CPU utilization bars
-- **Auto-refresh** every 30 seconds
-- **Detail panel** — `scontrol show job/node` on selection
+## Install
 
-## Dev Setup
-
-### 1. Start the local Slurm cluster
+### Option 1: install from GitHub with uv tool
 
 ```bash
-cd slurm-cluster
-./cluster.sh up          # starts slurmctld + 4 compute nodes
-./cluster.sh submit-test # submit 10 test jobs
-./cluster.sh status      # sinfo + squeue
+uv tool install git+https://github.com/t3bol90/sqtop.git
 ```
 
-### 2. Install the app
+### Option 2: install from local source checkout
 
 ```bash
-uv sync
+git clone https://github.com/t3bol90/sqtop.git
+cd sqtop
+uv tool install .
 ```
 
-### 3. Run sqtop inside the controller container
+### Upgrade
 
 ```bash
-# Option A: run sqtop on your host (if slurm binaries are in PATH)
-uv run sqtop
+uv tool upgrade sqtop
+```
 
-# Option B: exec into the cluster and run there
-docker exec -it slurm-slurmctld bash
-# then inside: sqtop
+## Usage
+
+Run:
+
+```bash
+sqtop
+```
+
+Prerequisite: Slurm CLI commands (`squeue`, `sinfo`, `scontrol`, `scancel`) must be available in `PATH`.
+
+If you run with this repo's local Docker-backed cluster shims, use:
+
+```bash
+./run.sh
 ```
 
 ## Keybindings
 
-| Key | Action       |
-|-----|--------------|
-| `1` | Jobs tab     |
-| `2` | Nodes tab    |
-| `r` | Refresh now  |
-| `q` | Quit         |
-| `?` | Help         |
+### Global
 
-## Architecture
+| Key | Action |
+|---|---|
+| `1` | Jobs tab |
+| `2` | Nodes tab |
+| `3` | Partitions tab |
+| `r` | Refresh all tabs |
+| `S` | Open settings |
+| `q` | Quit |
 
-```
-src/sqtop/
-├── __main__.py      # Entry point
-├── app.py           # Textual App, tabs, bindings
-├── slurm.py         # Data layer: squeue/sinfo/scontrol wrappers
-├── views/
-│   ├── jobs.py      # Jobs DataTable view
-│   ├── nodes.py     # Nodes DataTable view
-│   └── detail.py    # scontrol detail panel
-└── styles/
-    └── app.tcss     # Textual CSS
-```
+### Jobs tab
+
+| Key | Action |
+|---|---|
+| `Enter` | Open job actions |
+| `u` | Toggle only-my-jobs filter |
+| `/` | Open search |
+| `s` | Sort by state (toggle asc/desc) |
+| `t` | Sort by time |
+| `c` | Sort by CPUs |
+| `y` | Copy selected job ID |
+| `w` | Toggle watch on selected job |
+
+### Nodes tab
+
+| Key | Action |
+|---|---|
+| `Enter` | Open node details |
+| `s` | Sort by state |
+| `p` | Sort by CPU% |
+| `m` | Sort by free memory |
+
+### Partitions tab
+
+| Key | Action |
+|---|---|
+| `s` | Sort by partition |
+| `n` | Sort by nodes |
+
+## Contributing
+
+See [CONTRIBUTION.md](CONTRIBUTION.md) for local development setup and workflow.
