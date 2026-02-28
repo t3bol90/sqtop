@@ -21,6 +21,7 @@ class SqtopApp(App):
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
+        Binding("ctrl+c", "quit", "Quit", show=False),
         Binding("1", "switch_tab('jobs')", "Jobs"),
         Binding("2", "switch_tab('nodes')", "Nodes"),
         Binding("3", "switch_tab('partitions')", "Partitions"),
