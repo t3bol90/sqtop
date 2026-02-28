@@ -120,8 +120,10 @@ class NodesView(Static):
     def on_resize(self, event) -> None:
         new_cols = _visible_cols(event.size.width)
         if new_cols != self._current_cols:
+            state = self._capture_table_state()
             self._rebuild_columns(event.size.width)
             self._render_rows(self._last_nodes)
+            self._restore_table_state(state, self._sorted_visible(self._last_nodes))
 
     def _rebuild_columns(self, width: int) -> None:
         self._current_cols = _visible_cols(width)
@@ -129,6 +131,32 @@ class NodesView(Static):
         table.clear(columns=True)
         for name, col_width in self._current_cols:
             table.add_column(name, width=col_width)
+
+    def _capture_table_state(self) -> tuple[int, float, str | None]:
+        table = self.query_one(CyclicDataTable)
+        row = table.cursor_row
+        scroll_y = float(table.scroll_offset.y)
+        anchor: str | None = None
+        rows = self._sorted_visible(self._last_nodes)
+        if 0 <= row < len(rows):
+            anchor = rows[row].name
+        return row, scroll_y, anchor
+
+    def _restore_table_state(self, state: tuple[int, float, str | None], rows: list[Node]) -> None:
+        if not rows:
+            return
+        saved_row, scroll_y, anchor = state
+        table = self.query_one(CyclicDataTable)
+        row = None
+        if anchor:
+            for i, node in enumerate(rows):
+                if node.name == anchor:
+                    row = i
+                    break
+        if row is None:
+            row = min(saved_row, len(rows) - 1)
+        table.move_cursor(row=row)
+        table.scroll_to(y=scroll_y, animate=False)
 
     @work(thread=True)
     def refresh_data(self) -> None:
@@ -169,8 +197,10 @@ class NodesView(Static):
         return visible
 
     def _update_table(self, nodes: list[Node]) -> None:
+        state = self._capture_table_state()
         self._last_nodes = nodes
         self._render_rows(nodes)
+        self._restore_table_state(state, self._sorted_visible(nodes))
         now = datetime.now().strftime("%H:%M:%S")
         visible = [n for n in nodes if n.name]
         idle  = sum(1 for n in visible if "idle"  in n.state.lower())
@@ -192,7 +222,6 @@ class NodesView(Static):
     def _render_rows(self, nodes: list[Node]) -> None:
         rows = self._sorted_visible(nodes)
         table = self.query_one(CyclicDataTable)
-        saved_row = table.cursor_row
         table.clear()
         for node in rows:
             state_lower = node.state.lower().split("*")[0].rstrip("-")
@@ -225,8 +254,8 @@ class NodesView(Static):
                 elif name == "LOAD":
                     row.append(node.load)
             table.add_row(*row)
-        if rows:
-            table.move_cursor(row=min(saved_row, len(rows) - 1))
+        if rows and table.cursor_row < 0:
+            table.move_cursor(row=0)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         rows = self._sorted_visible(self._last_nodes)

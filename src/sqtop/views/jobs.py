@@ -218,8 +218,10 @@ class JobsView(Static):
         self._timer = self.set_interval(self._interval, self.refresh_data)
 
     def on_resize(self, event) -> None:
+        state = self._capture_table_state()
         self._rebuild_columns(event.size.width, self._last_jobs)
         self._render_rows(self._last_jobs)
+        self._restore_table_state(state, self._last_jobs)
 
     def _plain_cell(self, job: Job, col_name: str) -> str:
         if col_name == "JOBID":
@@ -267,6 +269,31 @@ class JobsView(Static):
         table.clear(columns=True)
         for name, col_width in self._current_cols:
             table.add_column(name, width=col_width)
+
+    def _capture_table_state(self) -> tuple[int, float, str | None]:
+        table = self.query_one(CyclicDataTable)
+        row = table.cursor_row
+        scroll_y = float(table.scroll_offset.y)
+        anchor: str | None = None
+        if 0 <= row < len(self._last_jobs):
+            anchor = self._last_jobs[row].job_id
+        return row, scroll_y, anchor
+
+    def _restore_table_state(self, state: tuple[int, float, str | None], jobs: list[Job]) -> None:
+        if not jobs:
+            return
+        saved_row, scroll_y, anchor = state
+        table = self.query_one(CyclicDataTable)
+        row = None
+        if anchor:
+            for i, job in enumerate(jobs):
+                if job.job_id == anchor:
+                    row = i
+                    break
+        if row is None:
+            row = min(saved_row, len(jobs) - 1)
+        table.move_cursor(row=row)
+        table.scroll_to(y=scroll_y, animate=False)
 
     @work(thread=True)
     def refresh_data(self) -> None:
@@ -536,6 +563,7 @@ class JobsView(Static):
     # ── Data pipeline ────────────────────────────────────────────────────────
 
     def _update_table(self, jobs: list[Job]) -> None:
+        state = self._capture_table_state()
         self._last_jobs_raw = jobs
         valid_ids = {j.job_id for j in jobs}
         self._selected_job_ids.intersection_update(valid_ids)
@@ -560,6 +588,7 @@ class JobsView(Static):
 
         self._rebuild_columns(self.size.width, self._last_jobs)
         self._render_rows(self._last_jobs)
+        self._restore_table_state(state, self._last_jobs)
         self._update_header(jobs)
 
     def _update_header(self, all_jobs: list[Job]) -> None:

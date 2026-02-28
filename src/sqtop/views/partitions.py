@@ -99,8 +99,10 @@ class PartitionsView(Static):
         self._set_sort("nodes")
 
     def _update_table(self, summaries: list[ClusterSummary]) -> None:
+        state = self._capture_table_state()
         self._last_summaries = summaries
         self._render_rows(summaries)
+        self._restore_table_state(state, self._sorted_rows(summaries))
         now = datetime.now().strftime("%H:%M:%S")
         up = sum(1 for s in summaries if s.avail.lower() == "up")
         self.query_one("#partitions-header", Label).update(
@@ -108,7 +110,7 @@ class PartitionsView(Static):
             f"[dim]{len(summaries)} partitions  updated {now}[/]"
         )
 
-    def _render_rows(self, summaries: list[ClusterSummary]) -> None:
+    def _sorted_rows(self, summaries: list[ClusterSummary]) -> list[ClusterSummary]:
         rows = list(summaries)
         if self._sort_col == "partition":
             rows = sorted(rows, key=lambda s: s.partition, reverse=self._sort_reversed)
@@ -118,9 +120,40 @@ class PartitionsView(Static):
                 key=lambda s: int(s.nodes) if s.nodes.isdigit() else 0,
                 reverse=self._sort_reversed,
             )
+        return rows
+
+    def _capture_table_state(self) -> tuple[int, float, str | None]:
+        table = self.query_one(CyclicDataTable)
+        row = table.cursor_row
+        scroll_y = float(table.scroll_offset.y)
+        anchor: str | None = None
+        rows = self._sorted_rows(self._last_summaries)
+        if 0 <= row < len(rows):
+            anchor = rows[row].partition
+        return row, scroll_y, anchor
+
+    def _restore_table_state(
+        self, state: tuple[int, float, str | None], rows: list[ClusterSummary]
+    ) -> None:
+        if not rows:
+            return
+        saved_row, scroll_y, anchor = state
+        table = self.query_one(CyclicDataTable)
+        row = None
+        if anchor:
+            for i, summary in enumerate(rows):
+                if summary.partition == anchor:
+                    row = i
+                    break
+        if row is None:
+            row = min(saved_row, len(rows) - 1)
+        table.move_cursor(row=row)
+        table.scroll_to(y=scroll_y, animate=False)
+
+    def _render_rows(self, summaries: list[ClusterSummary]) -> None:
+        rows = self._sorted_rows(summaries)
 
         table = self.query_one(CyclicDataTable)
-        saved_row = table.cursor_row
         table.clear()
         for s in rows:
             avail_color = AVAIL_COLORS.get(s.avail.lower(), "white")
@@ -134,5 +167,5 @@ class PartitionsView(Static):
                 f"[{state_color}]{s.state}[/]",
                 s.nodelist,
             )
-        if rows:
-            table.move_cursor(row=min(saved_row, len(rows) - 1))
+        if rows and table.cursor_row < 0:
+            table.move_cursor(row=0)
