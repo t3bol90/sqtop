@@ -120,6 +120,7 @@ class NodesView(Static):
 
     def _render_rows(self, nodes: list[Node]) -> None:
         table = self.query_one(CyclicDataTable)
+        saved_row = table.cursor_row
         table.clear()
         for node in nodes:
             if not node.name:
@@ -152,3 +153,6 @@ class NodesView(Static):
                 elif name == "LOAD":
                     row.append(node.load)
             table.add_row(*row)
+        visible = [n for n in nodes if n.name]
+        if visible:
+            table.move_cursor(row=min(saved_row, len(visible) - 1))
