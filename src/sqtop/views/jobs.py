@@ -147,20 +147,20 @@ class JobsView(Static):
     """Displays a live squeue-style table."""
 
     BINDINGS = [
-        Binding("enter", "open_job", "Open job", show=True),
-        Binding("u", "toggle_mine", "My jobs", show=True),
+        Binding("enter", "open_job", "Open", show=True),
+        Binding("u", "toggle_mine", "My jobs", show=False),
         Binding("slash", "activate_search", "Search", show=True),
         Binding("space", "toggle_select", "Select", show=True),
         Binding("asterisk", "select_all_visible", "Select all", show=False),
         Binding("x", "clear_selection", "Clear selected", show=False),
-        Binding("B", "bulk_actions", "Bulk actions", show=True),
+        Binding("B", "bulk_actions", "Bulk", show=True),
         Binding("h", "hold_jobs", "Hold", show=False),
         Binding("R", "release_jobs", "Release", show=False),
         Binding("e", "requeue_jobs", "Requeue", show=False),
         Binding("s", "sort_state", show=False),
         Binding("t", "sort_time", show=False),
         Binding("c", "sort_cpus", show=False),
-        Binding("y", "yank_job_id", "Copy ID", show=True),
+        Binding("y", "yank_job_id", "Copy ID", show=False),
         Binding("w", "watch_job", "Watch", show=True),
     ]
 

@@ -29,8 +29,8 @@ class SqtopApp(App):
         Binding("4", "switch_tab('health')", "Health"),
         Binding("ctrl+k", "command_palette", "Palette"),
         Binding("r", "refresh", "Refresh"),
-        Binding("P", "save_screenshot", "Screenshot"),
-        Binding("S", "settings", "Settings"),
+        Binding("P", "save_screenshot", "Screenshot", show=False),
+        Binding("S", "settings", "Settings", show=False),
     ]
 
     TITLE = "sqtop"
