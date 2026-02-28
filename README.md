@@ -61,7 +61,17 @@ name_max = 24
 user_max = 12
 partition_max = 14
 nodelist_reason_max = 40
+
+[attach]
+enabled = true
+default_command = "$SHELL -l"
+extra_args = ""
 ```
+
+Attach behavior:
+- Attach actions are available from `Enter` on a `RUNNING` job.
+- sqtop suspends while the interactive `srun --pty` session is active.
+- Exit the shell to return to sqtop.
 
 ## Keybindings
 

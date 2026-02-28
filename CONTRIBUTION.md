@@ -67,6 +67,7 @@ Basic manual verification checklist:
 - Jobs tab refreshes and row selection works
 - Node details open with `Enter`
 - Job actions open with `Enter`
+- Attach from job actions opens `srun --pty` and returns to sqtop on shell exit
 - Log viewer opens for stdout/stderr
 - Settings (`S`) updates theme and refresh interval
 - Partitions tab (`3`) renders and sorts
@@ -88,4 +89,3 @@ Prefer small focused commits with conventional prefixes, e.g.:
 - `fix: ...`
 - `docs: ...`
 - `refactor: ...`
-
