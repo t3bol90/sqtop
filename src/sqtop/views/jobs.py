@@ -361,17 +361,19 @@ class JobsView(Static):
             self.app.notify("Attach is only available for RUNNING jobs.", severity="warning")
             return
 
+        detail = fetch_job_detail(job.job_id)
+        attach_job_id = detail.get("JobId", "").strip() or job.job_id
+
         node = (node_override or "").strip()
         if not node:
             node = resolve_first_node(job.nodelist)
             if not node:
-                detail = fetch_job_detail(job.job_id)
                 node = resolve_first_node(detail.get("NodeList", ""))
 
         try:
             resolved_command = self._resolve_attach_command()
             command = build_attach_command(
-                job_id=job.job_id,
+                job_id=attach_job_id,
                 node=node or None,
                 default_command=resolved_command,
                 extra_args=self._attach_extra_args,
@@ -390,7 +392,7 @@ class JobsView(Static):
             rc = run_attach_command(command)
             if rc != 0 and resolved_command != "bash -l":
                 fallback = build_attach_command(
-                    job_id=job.job_id,
+                    job_id=attach_job_id,
                     node=node or None,
                     default_command="bash -l",
                     extra_args=self._attach_extra_args,
