@@ -780,6 +780,7 @@ name = "sqtop"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "markdown-it-py" },
     { name = "rich" },
     { name = "textual" },
 ]
@@ -793,6 +794,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "markdown-it-py", specifier = ">=3.0.0" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "textual", specifier = ">=0.80.0" },
 ]
