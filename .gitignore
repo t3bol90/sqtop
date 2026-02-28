@@ -16,3 +16,6 @@ build/
 # Slurm log files generated during testing
 *.out
 *.err
+
+# Ignore csync config file
+.csync.cfg

@@ -254,6 +254,11 @@ def build_attach_command(
 
 
 def run_attach_command(cmd: list[str]) -> int:
-    """Run interactive attach command with inherited stdio."""
-    result = subprocess.run(cmd)
+    """Run interactive attach command against the controlling terminal."""
+    try:
+        with open("/dev/tty", "rb+", buffering=0) as tty:
+            result = subprocess.run(cmd, stdin=tty, stdout=tty, stderr=tty)
+    except OSError:
+        # Fallback for environments without /dev/tty.
+        result = subprocess.run(cmd)
     return result.returncode
