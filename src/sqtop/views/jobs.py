@@ -12,8 +12,18 @@ from textual.binding import Binding
 from textual.widgets import DataTable, Input, Label, Static
 from textual import work
 
-from ..slurm import Job, cancel_job, fetch_job_detail, fetch_jobs, fetch_log_paths
+from ..slurm import (
+    Job,
+    build_attach_command,
+    cancel_job,
+    fetch_job_detail,
+    fetch_jobs,
+    fetch_log_paths,
+    resolve_first_node,
+    run_attach_command,
+)
 from .. import config
+from .attach_prompt import AttachNodePromptScreen
 from .confirm import ConfirmScreen
 from .job_actions import JobActionScreen
 from .job_detail import JobDetailScreen
@@ -22,6 +32,7 @@ from .widgets import CyclicDataTable
 
 _STATE_ORDER = {"COMPLETING": 0, "RUNNING": 1, "PENDING": 2}
 _TERMINAL_STATES = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "PREEMPTED"}
+_ATTACH_STATES = {"RUNNING"}
 
 
 def _job_sort_key(job: Job) -> tuple:
@@ -120,6 +131,14 @@ def _coerce_positive_int(value: object, default: int) -> int:
         return default
 
 
+def _coerce_bool(value: object, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return default
+
+
 class JobsView(Static):
     """Displays a live squeue-style table."""
 
@@ -151,6 +170,10 @@ class JobsView(Static):
         self._col_max = dict(_DEFAULT_COL_MAX)
         for col, key in _CONFIG_COL_KEYS.items():
             self._col_max[col] = _coerce_positive_int(cfg.get(key), _DEFAULT_COL_MAX[col])
+        attach_cfg = config.load().get("attach", {})
+        self._attach_enabled = _coerce_bool(attach_cfg.get("enabled", True), True)
+        self._attach_default_command = str(attach_cfg.get("default_command", "$SHELL -l"))
+        self._attach_extra_args = str(attach_cfg.get("extra_args", ""))
 
     def compose(self) -> ComposeResult:
         yield Label("", id="jobs-header")
@@ -313,6 +336,53 @@ class JobsView(Static):
         self._update_table(self._last_jobs_raw)
         self.query_one(CyclicDataTable).focus()
 
+    def _resolve_attach_command(self) -> str:
+        command = self._attach_default_command.strip() or "$SHELL -l"
+        if command == "$SHELL -l":
+            shell = os.getenv("SHELL", "").strip()
+            return f"{shell} -l" if shell else "bash -l"
+        return command
+
+    def _run_attach(self, job: Job, node_override: str | None = None) -> None:
+        if not self._attach_enabled:
+            self.app.notify("Attach disabled in config [attach].enabled", severity="warning")
+            return
+        if job.state not in _ATTACH_STATES:
+            self.app.notify("Attach is only available for RUNNING jobs.", severity="warning")
+            return
+
+        node = (node_override or "").strip()
+        if not node:
+            node = resolve_first_node(job.nodelist)
+            if not node:
+                detail = fetch_job_detail(job.job_id)
+                node = resolve_first_node(detail.get("NodeList", ""))
+
+        try:
+            command = build_attach_command(
+                job_id=job.job_id,
+                node=node or None,
+                default_command=self._resolve_attach_command(),
+                extra_args=self._attach_extra_args,
+            )
+        except ValueError as exc:
+            self.app.notify(f"Attach command parse error: {exc}", severity="error")
+            return
+
+        self.app.notify(
+            "Launching attach session. Exit shell to return to sqtop.",
+            title="Attach",
+            timeout=4,
+        )
+        with self.app.suspend():
+            rc = run_attach_command(command)
+
+        if rc == 0:
+            self.app.notify("Attach session ended", title="Attach")
+        else:
+            self.app.notify(f"Attach exited with code {rc}", title="Attach", severity="warning")
+        self.refresh_data()
+
     # ── Data pipeline ────────────────────────────────────────────────────────
 
     def _update_table(self, jobs: list[Job]) -> None:
@@ -416,7 +486,18 @@ class JobsView(Static):
         def handle_action(action: str | None) -> None:
             if action is None:
                 return
-            if action == "detail":
+            if action == "attach_first":
+                self._run_attach(job)
+            elif action == "attach_custom":
+                default_node = resolve_first_node(job.nodelist)
+
+                def do_attach(node_value: str | None) -> None:
+                    if node_value is None:
+                        return
+                    self._run_attach(job, node_value)
+
+                self.app.push_screen(AttachNodePromptScreen(default_node), do_attach)
+            elif action == "detail":
                 data = fetch_job_detail(job.job_id)
                 self.app.push_screen(JobDetailScreen(job.job_id, data))
             elif action == "cancel":
