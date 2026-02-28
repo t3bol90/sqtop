@@ -6,10 +6,36 @@ import re
 import subprocess
 import shlex
 from dataclasses import dataclass
+from collections import deque
+from time import monotonic
 
 
-def _run(cmd: str) -> str:
-    """Run a shell command and return stdout, or empty string on error."""
+@dataclass
+class CommandStat:
+    command: str
+    ok: bool
+    latency_ms: int
+    stderr: str = ""
+
+
+@dataclass
+class ActionResult:
+    job_id: str
+    action: str
+    ok: bool
+    message: str = ""
+
+
+_COMMAND_HISTORY: deque[CommandStat] = deque(maxlen=300)
+
+
+def _record_command(command: str, ok: bool, latency_ms: int, stderr: str = "") -> None:
+    _COMMAND_HISTORY.append(CommandStat(command=command, ok=ok, latency_ms=latency_ms, stderr=stderr))
+
+
+def _run_result(cmd: str) -> tuple[str, bool, str]:
+    """Run command and return (stdout, ok, stderr)."""
+    start = monotonic()
     try:
         result = subprocess.run(
             shlex.split(cmd),
@@ -17,9 +43,27 @@ def _run(cmd: str) -> str:
             text=True,
             timeout=10,
         )
-        return result.stdout
+        ok = result.returncode == 0
+        _record_command(
+            cmd,
+            ok=ok,
+            latency_ms=int((monotonic() - start) * 1000),
+            stderr=(result.stderr or "").strip(),
+        )
+        return result.stdout, ok, (result.stderr or "").strip()
     except (subprocess.TimeoutExpired, FileNotFoundError):
-        return ""
+        _record_command(
+            cmd,
+            ok=False,
+            latency_ms=int((monotonic() - start) * 1000),
+            stderr="timeout or command not found",
+        )
+        return "", False, "timeout or command not found"
+
+
+def _run(cmd: str) -> str:
+    out, _, _ = _run_result(cmd)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -208,8 +252,32 @@ def fetch_log_paths(job_id: str) -> tuple[str, str]:
 
 def cancel_job(job_id: str) -> bool:
     """Run scancel <job_id>. Returns True if command succeeded."""
-    result = subprocess.run(["scancel", job_id], capture_output=True, timeout=10)
-    return result.returncode == 0
+    ok, _ = cancel_job_result(job_id)
+    return ok
+
+
+def cancel_job_result(job_id: str) -> tuple[bool, str]:
+    """Run scancel and return (ok, stderr)."""
+    _, ok, stderr = _run_result(f"scancel {shlex.quote(job_id)}")
+    return ok, stderr
+
+
+def hold_job_result(job_id: str) -> tuple[bool, str]:
+    """Run scontrol hold and return (ok, stderr)."""
+    _, ok, stderr = _run_result(f"scontrol hold {shlex.quote(job_id)}")
+    return ok, stderr
+
+
+def release_job_result(job_id: str) -> tuple[bool, str]:
+    """Run scontrol release and return (ok, stderr)."""
+    _, ok, stderr = _run_result(f"scontrol release {shlex.quote(job_id)}")
+    return ok, stderr
+
+
+def requeue_job_result(job_id: str) -> tuple[bool, str]:
+    """Run scontrol requeue and return (ok, stderr)."""
+    _, ok, stderr = _run_result(f"scontrol requeue {shlex.quote(job_id)}")
+    return ok, stderr
 
 
 def tail_log_file(path: str, n: int = 200) -> str:
@@ -255,10 +323,43 @@ def build_attach_command(
 
 def run_attach_command(cmd: list[str]) -> int:
     """Run interactive attach command against the controlling terminal."""
+    start = monotonic()
     try:
         with open("/dev/tty", "rb+", buffering=0) as tty:
             result = subprocess.run(cmd, stdin=tty, stdout=tty, stderr=tty)
     except OSError:
         # Fallback for environments without /dev/tty.
         result = subprocess.run(cmd)
+    _record_command(
+        " ".join(cmd),
+        ok=(result.returncode == 0),
+        latency_ms=int((monotonic() - start) * 1000),
+        stderr="" if result.returncode == 0 else f"exit {result.returncode}",
+    )
     return result.returncode
+
+
+def run_job_action(action: str, job_id: str) -> ActionResult:
+    """Execute a per-job action with normalized result message."""
+    action = action.lower()
+    if action == "cancel":
+        ok, err = cancel_job_result(job_id)
+    elif action == "hold":
+        ok, err = hold_job_result(job_id)
+    elif action == "release":
+        ok, err = release_job_result(job_id)
+    elif action == "requeue":
+        ok, err = requeue_job_result(job_id)
+    else:
+        return ActionResult(job_id=job_id, action=action, ok=False, message="unsupported action")
+    return ActionResult(job_id=job_id, action=action, ok=ok, message=err or ("ok" if ok else "failed"))
+
+
+def run_bulk_job_action(action: str, job_ids: list[str]) -> list[ActionResult]:
+    return [run_job_action(action, job_id) for job_id in job_ids]
+
+
+def fetch_command_health(limit: int = 100) -> list[CommandStat]:
+    if limit <= 0:
+        return []
+    return list(_COMMAND_HISTORY)[-limit:]

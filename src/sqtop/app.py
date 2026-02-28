@@ -7,6 +7,8 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 
+from .views.command_palette import CommandPaletteScreen
+from .views.health import HealthView
 from .views.jobs import JobsView
 from .views.nodes import NodesView
 from .views.partitions import PartitionsView
@@ -24,6 +26,8 @@ class SqtopApp(App):
         Binding("1", "switch_tab('jobs')", "Jobs"),
         Binding("2", "switch_tab('nodes')", "Nodes"),
         Binding("3", "switch_tab('partitions')", "Partitions"),
+        Binding("4", "switch_tab('health')", "Health"),
+        Binding("ctrl+k", "command_palette", "Palette"),
         Binding("r", "refresh", "Refresh"),
         Binding("P", "save_screenshot", "Screenshot"),
         Binding("S", "settings", "Settings"),
@@ -36,6 +40,9 @@ class SqtopApp(App):
         cfg = config.load()
         self.interval = cfg["interval"]
         self._saved_theme = cfg["theme"]
+        self.expert_mode = bool(cfg.get("ui", {}).get("expert_mode", False))
+        self.confirm_cancel_single = bool(cfg.get("safety", {}).get("confirm_cancel_single", True))
+        self.confirm_bulk_actions = bool(cfg.get("safety", {}).get("confirm_bulk_actions", True))
 
     def on_mount(self) -> None:
         self.theme = self._saved_theme
@@ -51,6 +58,8 @@ class SqtopApp(App):
                 yield NodesView(self.interval)
             with TabPane("Partitions [3]", id="partitions"):
                 yield PartitionsView(self.interval)
+            with TabPane("Health [4]", id="health"):
+                yield HealthView(self.interval)
         yield Footer()
 
     def action_switch_tab(self, tab_id: str) -> None:
@@ -62,6 +71,7 @@ class SqtopApp(App):
             "jobs": "#jobs-table",
             "nodes": "#nodes-table",
             "partitions": "#partitions-table",
+            "health": "#health-table",
         }.get(tab_id)
         if not table_id:
             return
@@ -72,11 +82,19 @@ class SqtopApp(App):
             return
 
     def action_refresh(self) -> None:
-        for view in self.query("JobsView, NodesView, PartitionsView"):
+        for view in self.query("JobsView, NodesView, PartitionsView, HealthView"):
             view.refresh_data()  # type: ignore[union-attr]
 
     def action_settings(self) -> None:
-        self.push_screen(SettingsScreen(self.theme, self.interval))
+        self.push_screen(
+            SettingsScreen(
+                self.theme,
+                self.interval,
+                self.expert_mode,
+                self.confirm_cancel_single,
+                self.confirm_bulk_actions,
+            )
+        )
 
     def action_save_screenshot(self) -> None:
         screenshot_dir = Path.home() / ".cache" / "sqtop" / "screenshots"
@@ -87,7 +105,22 @@ class SqtopApp(App):
         except Exception as exc:
             self.notify(f"Screenshot failed: {exc}", title="Screenshot", severity="error")
 
+    def action_command_palette(self) -> None:
+        def handle(action: str | None) -> None:
+            if action is None:
+                return
+            if action in {"jobs", "nodes", "partitions", "health"}:
+                self.action_switch_tab(action)
+            elif action == "refresh":
+                self.action_refresh()
+            elif action == "settings":
+                self.action_settings()
+            elif action == "screenshot":
+                self.action_save_screenshot()
+
+        self.push_screen(CommandPaletteScreen(), handle)
+
     def set_refresh_interval(self, interval: float) -> None:
         self.interval = interval
-        for view in self.query("JobsView, NodesView, PartitionsView"):
+        for view in self.query("JobsView, NodesView, PartitionsView, HealthView"):
             view.set_interval_rate(interval)  # type: ignore[union-attr]

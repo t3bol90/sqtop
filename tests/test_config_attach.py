@@ -58,3 +58,16 @@ def test_save_preserves_attach_values(monkeypatch, tmp_path):
     assert "enabled = false" in content
     assert 'default_command = "zsh -l"' in content
     assert 'extra_args = "--mpi=none"' in content
+
+
+def test_update_merges_nested_sections(monkeypatch, tmp_path):
+    cfg_file = tmp_path / "config.toml"
+    monkeypatch.setattr(config, "_CONFIG_FILE", cfg_file)
+    monkeypatch.setattr(config, "_CONFIG_DIR", tmp_path)
+
+    config.update({"ui": {"expert_mode": True}, "safety": {"confirm_bulk_actions": False}})
+    cfg = config.load()
+    assert cfg["ui"]["expert_mode"] is True
+    assert cfg["safety"]["confirm_bulk_actions"] is False
+    # untouched defaults remain
+    assert cfg["safety"]["confirm_cancel_single"] is True

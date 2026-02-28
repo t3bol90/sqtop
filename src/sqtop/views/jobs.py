@@ -14,17 +14,20 @@ from textual.widgets import DataTable, Input, Label, Static
 from textual import work
 
 from ..slurm import (
+    ActionResult,
     Job,
     build_attach_command,
-    cancel_job,
     fetch_job_detail,
     fetch_jobs,
     fetch_log_paths,
     resolve_first_node,
+    run_bulk_job_action,
+    run_job_action,
     run_attach_command,
 )
 from .. import config
 from .attach_prompt import AttachNodePromptScreen
+from .bulk_actions import BulkActionScreen
 from .confirm import ConfirmScreen
 from .job_actions import JobActionScreen
 from .job_detail import JobDetailScreen
@@ -147,6 +150,13 @@ class JobsView(Static):
         Binding("enter", "open_job", "Open job", show=True),
         Binding("u", "toggle_mine", "My jobs", show=True),
         Binding("slash", "activate_search", "Search", show=True),
+        Binding("space", "toggle_select", "Select", show=True),
+        Binding("asterisk", "select_all_visible", "Select all", show=False),
+        Binding("x", "clear_selection", "Clear selected", show=False),
+        Binding("B", "bulk_actions", "Bulk actions", show=True),
+        Binding("h", "hold_jobs", "Hold", show=False),
+        Binding("R", "release_jobs", "Release", show=False),
+        Binding("e", "requeue_jobs", "Requeue", show=False),
         Binding("s", "sort_state", show=False),
         Binding("t", "sort_time", show=False),
         Binding("c", "sort_cpus", show=False),
@@ -167,14 +177,25 @@ class JobsView(Static):
         self._sort_col: str | None = None   # None = default state-priority sort
         self._sort_reversed: bool = False
         self._watched_states: dict[str, str] = {}  # job_id → last known state
-        cfg = config.load().get("jobs", {})
+        cfg_all = config.load()
+        cfg = cfg_all.get("jobs", {})
         self._col_max = dict(_DEFAULT_COL_MAX)
         for col, key in _CONFIG_COL_KEYS.items():
             self._col_max[col] = _coerce_positive_int(cfg.get(key), _DEFAULT_COL_MAX[col])
-        attach_cfg = config.load().get("attach", {})
+        attach_cfg = cfg_all.get("attach", {})
         self._attach_enabled = _coerce_bool(attach_cfg.get("enabled", True), True)
         self._attach_default_command = str(attach_cfg.get("default_command", "$SHELL -l"))
         self._attach_extra_args = str(attach_cfg.get("extra_args", ""))
+        ui_cfg = cfg_all.get("ui", {})
+        safety_cfg = cfg_all.get("safety", {})
+        self._expert_mode = _coerce_bool(ui_cfg.get("expert_mode", False), False)
+        self._confirm_cancel_single = _coerce_bool(
+            safety_cfg.get("confirm_cancel_single", True), True
+        )
+        self._confirm_bulk_actions = _coerce_bool(
+            safety_cfg.get("confirm_bulk_actions", True), True
+        )
+        self._selected_job_ids: set[str] = set()
 
     def compose(self) -> ComposeResult:
         yield Label("", id="jobs-header")
@@ -311,6 +332,109 @@ class JobsView(Static):
             self.app.notify(f"Watching job {job.job_id} ({job.name})", title="Watch")
         self._render_rows(self._last_jobs)
 
+    def _expert_mode_enabled(self) -> bool:
+        return bool(getattr(self.app, "expert_mode", self._expert_mode))
+
+    def _confirm_single_cancel_enabled(self) -> bool:
+        return bool(getattr(self.app, "confirm_cancel_single", self._confirm_cancel_single))
+
+    def _confirm_bulk_actions_enabled(self) -> bool:
+        return bool(getattr(self.app, "confirm_bulk_actions", self._confirm_bulk_actions))
+
+    def _job_for_cursor(self) -> Job | None:
+        table = self.query_one(CyclicDataTable)
+        row_idx = table.cursor_row
+        if row_idx >= len(self._last_jobs):
+            return None
+        return self._last_jobs[row_idx]
+
+    def action_toggle_select(self) -> None:
+        job = self._job_for_cursor()
+        if job is None:
+            return
+        if job.job_id in self._selected_job_ids:
+            self._selected_job_ids.remove(job.job_id)
+        else:
+            self._selected_job_ids.add(job.job_id)
+        self._render_rows(self._last_jobs)
+        self._update_header(self._last_jobs_raw)
+
+    def action_select_all_visible(self) -> None:
+        self._selected_job_ids.update(j.job_id for j in self._last_jobs)
+        self._render_rows(self._last_jobs)
+        self._update_header(self._last_jobs_raw)
+
+    def action_clear_selection(self) -> None:
+        self._selected_job_ids.clear()
+        self._render_rows(self._last_jobs)
+        self._update_header(self._last_jobs_raw)
+
+    def _selected_or_current_job_ids(self) -> list[str]:
+        if self._selected_job_ids:
+            visible = {j.job_id for j in self._last_jobs}
+            return [job_id for job_id in self._selected_job_ids if job_id in visible]
+        job = self._job_for_cursor()
+        return [job.job_id] if job else []
+
+    def _run_action_results(self, action: str, results: list[ActionResult]) -> None:
+        ok_count = sum(1 for r in results if r.ok)
+        fail_count = len(results) - ok_count
+        if fail_count == 0:
+            self.app.notify(f"{action}: {ok_count} succeeded", title="Bulk action")
+            return
+        first_error = next((r.message for r in results if not r.ok and r.message), "failed")
+        self.app.notify(
+            f"{action}: {ok_count} ok, {fail_count} failed ({first_error})",
+            title="Bulk action",
+            severity="warning",
+            timeout=8,
+        )
+
+    def _run_bulk_action(self, action: str, job_ids: list[str]) -> None:
+        if not job_ids:
+            self.app.notify("No jobs selected", severity="warning")
+            return
+
+        def execute() -> None:
+            results = run_bulk_job_action(action, job_ids)
+            self._run_action_results(action, results)
+            self.refresh_data()
+
+        expert_mode = self._expert_mode_enabled()
+        need_confirm = (
+            (not expert_mode and self._confirm_bulk_actions_enabled())
+            or (action == "cancel" and not expert_mode)
+        )
+        if need_confirm:
+            self.app.push_screen(
+                ConfirmScreen(f"{action.title()} {len(job_ids)} job(s)?"),
+                lambda confirmed: execute() if confirmed else None,
+            )
+        else:
+            execute()
+
+    def action_bulk_actions(self) -> None:
+        selected_ids = self._selected_or_current_job_ids()
+        if not selected_ids:
+            self.app.notify("No jobs selected", severity="warning")
+            return
+
+        def handle(action: str | None) -> None:
+            if action is None:
+                return
+            self._run_bulk_action(action, selected_ids)
+
+        self.app.push_screen(BulkActionScreen(len(selected_ids)), handle)
+
+    def action_hold_jobs(self) -> None:
+        self._run_bulk_action("hold", self._selected_or_current_job_ids())
+
+    def action_release_jobs(self) -> None:
+        self._run_bulk_action("release", self._selected_or_current_job_ids())
+
+    def action_requeue_jobs(self) -> None:
+        self._run_bulk_action("requeue", self._selected_or_current_job_ids())
+
     # ── Input / key events ────────────────────────────────────────────────────
 
     def on_input_changed(self, event: Input.Changed) -> None:
@@ -413,6 +537,8 @@ class JobsView(Static):
 
     def _update_table(self, jobs: list[Job]) -> None:
         self._last_jobs_raw = jobs
+        valid_ids = {j.job_id for j in jobs}
+        self._selected_job_ids.intersection_update(valid_ids)
         self._check_watched_jobs(jobs)
 
         filtered = jobs
@@ -451,6 +577,10 @@ class JobsView(Static):
             tags.append(f"[dim]sort:{self._sort_col}{arrow}[/]")
         if self._watched_states:
             tags.append(f"[magenta]· {len(self._watched_states)} watched[/]")
+        if self._selected_job_ids:
+            tags.append(f"[blue]· {len(self._selected_job_ids)} selected[/]")
+        if self._expert_mode_enabled():
+            tags.append("[red]· expert[/]")
 
         suffix = ("  " + "  ".join(tags)) if tags else ""
         self.query_one("#jobs-header", Label).update(
@@ -489,10 +619,13 @@ class JobsView(Static):
         for job in jobs:
             color = STATE_COLORS.get(job.state, "white")
             watched_prefix = "★ " if job.job_id in self._watched_states else ""
+            selected_prefix = "✓ " if job.job_id in self._selected_job_ids else ""
             row = []
             for name, _ in self._current_cols:
                 if name == "JOBID":
-                    row.append(f"[{color}]{watched_prefix}{self._cell_text(job, name)}[/]")
+                    row.append(
+                        f"[{color}]{selected_prefix}{watched_prefix}{self._cell_text(job, name)}[/]"
+                    )
                 elif name == "NAME":
                     row.append(f"[{color}]{self._cell_text(job, name)}[/]")
                 elif name == "STATE":
@@ -527,13 +660,26 @@ class JobsView(Static):
                 data = fetch_job_detail(job.job_id)
                 self.app.push_screen(JobDetailScreen(job.job_id, data))
             elif action == "cancel":
-                def do_cancel(confirmed: bool) -> None:
-                    if confirmed:
-                        cancel_job(job.job_id)
-                self.app.push_screen(
-                    ConfirmScreen(f"Cancel job {job.job_id} ({job.name})?"),
-                    do_cancel,
-                )
+                def execute_cancel() -> None:
+                    result = run_job_action("cancel", job.job_id)
+                    if result.ok:
+                        self.app.notify(f"Cancelled {job.job_id}", title="Job action")
+                    else:
+                        self.app.notify(
+                            f"Cancel failed: {result.message}",
+                            title="Job action",
+                            severity="warning",
+                        )
+                    self.refresh_data()
+
+                need_confirm = (not self._expert_mode_enabled()) and self._confirm_single_cancel_enabled()
+                if need_confirm:
+                    self.app.push_screen(
+                        ConfirmScreen(f"Cancel job {job.job_id} ({job.name})?"),
+                        lambda confirmed: execute_cancel() if confirmed else None,
+                    )
+                else:
+                    execute_cancel()
             else:
                 stdout_path, stderr_path = fetch_log_paths(job.job_id)
                 log_path = stdout_path if action == "stdout" else stderr_path

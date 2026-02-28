@@ -66,6 +66,20 @@ nodelist_reason_max = 40
 enabled = true
 default_command = "$SHELL -l"
 extra_args = ""
+
+[ui]
+expert_mode = false
+show_palette_hints = true
+
+[safety]
+confirm_cancel_single = true
+confirm_bulk_actions = true
+
+[health]
+enabled = true
+history_size = 100
+warn_pending_ratio = 0.7
+warn_down_nodes = 1
 ```
 
 Attach behavior:
@@ -82,6 +96,8 @@ Attach behavior:
 | `1` | Jobs tab |
 | `2` | Nodes tab |
 | `3` | Partitions tab |
+| `4` | Health tab |
+| `Ctrl+K` | Command palette |
 | `r` | Refresh all tabs |
 | `Shift+P` | Save screenshot to `~/.cache/sqtop/screenshots` |
 | `S` | Open settings |
@@ -94,6 +110,13 @@ Attach behavior:
 | `Enter` | Open job actions |
 | `u` | Toggle only-my-jobs filter |
 | `/` | Open search |
+| `Space` | Select/deselect current job |
+| `*` | Select all visible jobs |
+| `x` | Clear selected jobs |
+| `Shift+B` | Bulk actions menu |
+| `h` | Hold selected/current job(s) |
+| `Shift+R` | Release selected/current job(s) |
+| `e` | Requeue selected/current job(s) |
 | `s` | Sort by state (toggle asc/desc) |
 | `t` | Sort by time |
 | `c` | Sort by CPUs |

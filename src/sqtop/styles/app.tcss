@@ -76,6 +76,21 @@ PartitionsView {
     height: 1;
 }
 
+/* ── Health view ───────────────────────────────────────── */
+
+HealthView {
+    height: 1fr;
+    padding: 0;
+}
+
+#health-header {
+    background: $panel;
+    color: $text;
+    padding: 0 1;
+    text-style: bold;
+    height: 1;
+}
+
 /* ── Search bar (jobs view) ──────────────────────────────── */
 
 #search-bar {
