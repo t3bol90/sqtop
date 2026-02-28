@@ -42,6 +42,27 @@ If you run with this repo's local Docker-backed cluster shims, use:
 ./run.sh
 ```
 
+## Config
+
+Config file path:
+
+```bash
+~/.config/sqtop/config.toml
+```
+
+You can cap jobs-table text width (content longer than cap is truncated with `...`):
+
+```toml
+theme = "dracula"
+interval = 2.0
+
+[jobs]
+name_max = 24
+user_max = 12
+partition_max = 14
+nodelist_reason_max = 40
+```
+
 ## Keybindings
 
 ### Global

@@ -13,6 +13,7 @@ from textual.widgets import DataTable, Input, Label, Static
 from textual import work
 
 from ..slurm import Job, cancel_job, fetch_job_detail, fetch_jobs, fetch_log_paths
+from .. import config
 from .confirm import ConfirmScreen
 from .job_actions import JobActionScreen
 from .job_detail import JobDetailScreen
@@ -70,23 +71,53 @@ _SORT_KEYS = {
     "cpus":   lambda j: int(j.num_cpus) if j.num_cpus.isdigit() else 0,
 }
 
-# (header, col_width, min_terminal_width_to_show)
+# (header, min_col_width, min_terminal_width_to_show)
 COLUMNS: list[tuple[str, int, int]] = [
     ("JOBID",              8,   0),
-    ("NAME",              16,   0),
-    ("STATE",             12,   0),
-    ("USER",              10,  65),
+    ("NAME",               8,   0),
+    ("STATE",             10,   0),
+    ("USER",               8,  65),
     ("TIME",              10,  65),
-    ("PARTITION",         11,  90),
+    ("PARTITION",          9,  90),
     ("NODES",              6,  90),
     ("CPUS",               6, 105),
     ("TIME_LIMIT",        10, 105),
-    ("NODELIST(REASON)",  20, 120),
+    ("NODELIST(REASON)",  14, 120),
 ]
+
+_DEFAULT_COL_MAX = {
+    "NAME": 24,
+    "USER": 12,
+    "PARTITION": 14,
+    "NODELIST(REASON)": 40,
+}
+
+_CONFIG_COL_KEYS = {
+    "NAME": "name_max",
+    "USER": "user_max",
+    "PARTITION": "partition_max",
+    "NODELIST(REASON)": "nodelist_reason_max",
+}
 
 
 def _visible_cols(width: int) -> list[tuple[str, int]]:
-    return [(name, w) for name, w, min_w in COLUMNS if min_w <= width]
+    return [(name, min_w) for name, min_w, min_term_w in COLUMNS if min_term_w <= width]
+
+
+def _truncate(text: str, max_len: int | None) -> str:
+    if max_len is None or max_len <= 0 or len(text) <= max_len:
+        return text
+    if max_len <= 3:
+        return text[:max_len]
+    return text[: max_len - 3] + "..."
+
+
+def _coerce_positive_int(value: object, default: int) -> int:
+    try:
+        n = int(value)
+        return n if n > 0 else default
+    except (TypeError, ValueError):
+        return default
 
 
 class JobsView(Static):
@@ -116,6 +147,10 @@ class JobsView(Static):
         self._sort_col: str | None = None   # None = default state-priority sort
         self._sort_reversed: bool = False
         self._watched_states: dict[str, str] = {}  # job_id → last known state
+        cfg = config.load().get("jobs", {})
+        self._col_max = dict(_DEFAULT_COL_MAX)
+        for col, key in _CONFIG_COL_KEYS.items():
+            self._col_max[col] = _coerce_positive_int(cfg.get(key), _DEFAULT_COL_MAX[col])
 
     def compose(self) -> ComposeResult:
         yield Label("", id="jobs-header")
@@ -127,7 +162,7 @@ class JobsView(Static):
 
     def on_mount(self) -> None:
         self.query_one("#search-bar", Input).display = False
-        self._rebuild_columns(self.size.width)
+        self._rebuild_columns(self.size.width, [])
         self.refresh_data()
         self._timer = self.set_interval(self._interval, self.refresh_data)
 
@@ -138,13 +173,51 @@ class JobsView(Static):
         self._timer = self.set_interval(self._interval, self.refresh_data)
 
     def on_resize(self, event) -> None:
-        new_cols = _visible_cols(event.size.width)
-        if new_cols != self._current_cols:
-            self._rebuild_columns(event.size.width)
-            self._render_rows(self._last_jobs)
+        self._rebuild_columns(event.size.width, self._last_jobs)
+        self._render_rows(self._last_jobs)
 
-    def _rebuild_columns(self, width: int) -> None:
-        self._current_cols = _visible_cols(width)
+    def _plain_cell(self, job: Job, col_name: str) -> str:
+        if col_name == "JOBID":
+            return job.job_id
+        if col_name == "NAME":
+            return job.name
+        if col_name == "STATE":
+            return job.state
+        if col_name == "USER":
+            return job.user
+        if col_name == "TIME":
+            return job.time_used
+        if col_name == "PARTITION":
+            return job.partition
+        if col_name == "NODES":
+            return job.nodes
+        if col_name == "CPUS":
+            return job.num_cpus
+        if col_name == "TIME_LIMIT":
+            return job.time_limit
+        return job.nodelist or job.reason
+
+    def _cell_text(self, job: Job, col_name: str) -> str:
+        return _truncate(self._plain_cell(job, col_name), self._col_max.get(col_name))
+
+    def _rebuild_columns(self, width: int, jobs: list[Job]) -> None:
+        visible = _visible_cols(width)
+        new_cols: list[tuple[str, int]] = []
+        for col_name, min_w in visible:
+            if jobs:
+                longest = max(
+                    len(col_name),
+                    *(len(self._cell_text(job, col_name)) for job in jobs),
+                )
+            else:
+                longest = len(col_name)
+            max_w = self._col_max.get(col_name, max(min_w, longest + 1))
+            col_width = max(min_w, min(longest + 1, max_w))
+            new_cols.append((col_name, col_width))
+
+        if new_cols == self._current_cols:
+            return
+        self._current_cols = new_cols
         table = self.query_one(CyclicDataTable)
         table.clear(columns=True)
         for name, col_width in self._current_cols:
@@ -263,6 +336,7 @@ class JobsView(Static):
             key_fn = _SORT_KEYS[self._sort_col]
             self._last_jobs = sorted(filtered, key=key_fn, reverse=self._sort_reversed)
 
+        self._rebuild_columns(self.size.width, self._last_jobs)
         self._render_rows(self._last_jobs)
         self._update_header(jobs)
 
@@ -322,25 +396,13 @@ class JobsView(Static):
             row = []
             for name, _ in self._current_cols:
                 if name == "JOBID":
-                    row.append(f"[{color}]{watched_prefix}{job.job_id}[/]")
+                    row.append(f"[{color}]{watched_prefix}{self._cell_text(job, name)}[/]")
                 elif name == "NAME":
-                    row.append(f"[{color}]{job.name}[/]")
+                    row.append(f"[{color}]{self._cell_text(job, name)}[/]")
                 elif name == "STATE":
-                    row.append(f"[{color}]{job.state}[/]")
-                elif name == "USER":
-                    row.append(job.user)
-                elif name == "TIME":
-                    row.append(job.time_used)
-                elif name == "PARTITION":
-                    row.append(job.partition)
-                elif name == "NODES":
-                    row.append(job.nodes)
-                elif name == "CPUS":
-                    row.append(job.num_cpus)
-                elif name == "TIME_LIMIT":
-                    row.append(job.time_limit)
-                elif name == "NODELIST(REASON)":
-                    row.append(job.nodelist or job.reason)
+                    row.append(f"[{color}]{self._cell_text(job, name)}[/]")
+                else:
+                    row.append(self._cell_text(job, name))
             table.add_row(*row)
         if jobs:
             table.move_cursor(row=min(saved_row, len(jobs) - 1))
