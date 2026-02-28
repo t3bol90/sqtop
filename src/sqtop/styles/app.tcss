@@ -1,0 +1,76 @@
+/* sqtop — Textual CSS — theme-aware styles */
+
+Screen {
+    background: $background;
+}
+
+/* ── Shared table styles ─────────────────────────────────── */
+
+DataTable {
+    height: 1fr;
+    background: $surface;
+    border: tall $panel;
+}
+
+DataTable > .datatable--header {
+    background: $primary;
+    color: $background;
+    text-style: bold;
+}
+
+DataTable > .datatable--cursor {
+    background: $accent;
+    color: $background;
+}
+
+DataTable > .datatable--even-row {
+    background: $surface;
+}
+
+DataTable > .datatable--odd-row {
+    background: $panel;
+}
+
+/* ── Jobs view ──────────────────────────────────────────── */
+
+JobsView {
+    height: 1fr;
+    padding: 0;
+}
+
+#jobs-header {
+    background: $panel;
+    color: $text;
+    padding: 0 1;
+    text-style: bold;
+    height: 1;
+}
+
+/* ── Nodes view ─────────────────────────────────────────── */
+
+NodesView {
+    height: 1fr;
+    padding: 0;
+}
+
+#nodes-header {
+    background: $panel;
+    color: $text;
+    padding: 0 1;
+    text-style: bold;
+    height: 1;
+}
+
+/* ── Header ─────────────────────────────────────────────── */
+
+Header {
+    background: $primary;
+    color: $background;
+}
+
+/* ── Footer ─────────────────────────────────────────────── */
+
+Footer {
+    background: $panel;
+    color: $text-muted;
+}

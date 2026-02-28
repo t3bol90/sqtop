@@ -1,0 +1,18 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.pyz
+
+# uv
+.python-version
+
+# OS
+.DS_Store
+
+# Slurm log files generated during testing
+*.out
+*.err

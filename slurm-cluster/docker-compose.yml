@@ -1,0 +1,59 @@
+# sqtop dev cluster — extends the upstream slurm-docker-cluster
+# Uses the image built in ../slurm-docker-upstream
+# Adds c3 and c4 worker nodes on top of the upstream c1/c2
+
+include:
+  - path: ../slurm-docker-upstream/docker-compose.yml
+
+services:
+  c3:
+    image: slurm-docker-cluster:${SLURM_VERSION:-25.11.2}
+    command: ["slurmd"]
+    container_name: c3
+    hostname: c3
+    working_dir: /data
+    privileged: true
+    volumes:
+      - etc_munge:/etc/munge
+      - etc_slurm:/etc/slurm
+      - slurm_jobdir:/data
+      - var_log_slurm:/var/log/slurm
+    expose:
+      - "6818"
+    depends_on:
+      slurmctld:
+        condition: service_healthy
+    networks:
+      - slurm-network
+    healthcheck:
+      test: ["CMD-SHELL", "pidof slurmd"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  c4:
+    image: slurm-docker-cluster:${SLURM_VERSION:-25.11.2}
+    command: ["slurmd"]
+    container_name: c4
+    hostname: c4
+    working_dir: /data
+    privileged: true
+    volumes:
+      - etc_munge:/etc/munge
+      - etc_slurm:/etc/slurm
+      - slurm_jobdir:/data
+      - var_log_slurm:/var/log/slurm
+    expose:
+      - "6818"
+    depends_on:
+      slurmctld:
+        condition: service_healthy
+    networks:
+      - slurm-network
+    healthcheck:
+      test: ["CMD-SHELL", "pidof slurmd"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
