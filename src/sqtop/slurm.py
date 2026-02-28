@@ -94,15 +94,27 @@ class Node:
 
 
 def _fetch_gpus_alloc() -> dict[str, int]:
-    """Return {node_name: gpus_allocated} parsed from scontrol show nodes."""
+    """Return {node_name: gpus_allocated} from scontrol show nodes.
+
+    Reads AllocTRES (present in Slurm 24.x) and falls back to GresUsed
+    (older Slurm versions) so both are handled.
+    """
     out = _run("scontrol show nodes")
     result: dict[str, int] = {}
     node_name = ""
     for token in out.split():
         if token.startswith("NodeName="):
             node_name = token.partition("=")[2]
+        elif token.startswith("AllocTRES=") and node_name:
+            # AllocTRES=cpu=64,mem=256G,gres/gpu=8
+            # gres/gpu= (no colon) is the bare aggregate count
+            m = re.search(r'gres/gpu=(\d+)', token.partition("=")[2])
+            if m:
+                result[node_name] = int(m.group(1))
         elif token.startswith("GresUsed=") and node_name:
-            result[node_name] = _parse_gpu_count(token.partition("=")[2])
+            # Older Slurm: GresUsed=gpu:a100:4(IDX:0,1,2,3)
+            if node_name not in result:
+                result[node_name] = _parse_gpu_count(token.partition("=")[2])
     return result
 
 
