@@ -98,6 +98,18 @@ class SqtopApp(App):
         except Exception as exc:
             self.notify(f"Screenshot failed: {exc}", title="Screenshot", severity="error")
 
+    def action_show_help_panel(self) -> None:
+        """Open Textual help panel; fail gracefully if optional deps are missing."""
+        try:
+            super().action_show_help_panel()
+        except Exception as exc:
+            self.notify(
+                f"Help panel unavailable: {exc}",
+                title="Help",
+                severity="warning",
+                timeout=8,
+            )
+
     def set_refresh_interval(self, interval: float) -> None:
         self.interval = interval
         for view in self.query("JobsView, NodesView, PartitionsView"):
