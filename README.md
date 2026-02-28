@@ -96,8 +96,7 @@ Attach behavior:
 | `1` | Jobs tab |
 | `2` | Nodes tab |
 | `3` | Partitions tab |
-| `4` | Health tab |
-| `Ctrl+K` | Command palette |
+| `Ctrl+P` | Command palette |
 | `r` | Refresh all tabs |
 | `Shift+P` | Save screenshot to `~/.cache/sqtop/screenshots` |
 | `S` | Open settings |

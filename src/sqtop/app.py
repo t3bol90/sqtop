@@ -8,7 +8,6 @@ from textual.binding import Binding
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 
 from .views.command_palette import CommandPaletteScreen
-from .views.health import HealthView
 from .views.jobs import JobsView
 from .views.nodes import NodesView
 from .views.partitions import PartitionsView
@@ -26,8 +25,7 @@ class SqtopApp(App):
         Binding("1", "switch_tab('jobs')", "Jobs"),
         Binding("2", "switch_tab('nodes')", "Nodes"),
         Binding("3", "switch_tab('partitions')", "Partitions"),
-        Binding("4", "switch_tab('health')", "Health"),
-        Binding("ctrl+k", "command_palette", "Palette"),
+        Binding("ctrl+p", "command_palette", "Palette"),
         Binding("r", "refresh", "Refresh"),
         Binding("P", "save_screenshot", "Screenshot", show=False),
         Binding("S", "settings", "Settings", show=False),
@@ -58,8 +56,6 @@ class SqtopApp(App):
                 yield NodesView(self.interval)
             with TabPane("Partitions [3]", id="partitions"):
                 yield PartitionsView(self.interval)
-            with TabPane("Health [4]", id="health"):
-                yield HealthView(self.interval)
         yield Footer()
 
     def action_switch_tab(self, tab_id: str) -> None:
@@ -71,7 +67,6 @@ class SqtopApp(App):
             "jobs": "#jobs-table",
             "nodes": "#nodes-table",
             "partitions": "#partitions-table",
-            "health": "#health-table",
         }.get(tab_id)
         if not table_id:
             return
@@ -82,7 +77,7 @@ class SqtopApp(App):
             return
 
     def action_refresh(self) -> None:
-        for view in self.query("JobsView, NodesView, PartitionsView, HealthView"):
+        for view in self.query("JobsView, NodesView, PartitionsView"):
             view.refresh_data()  # type: ignore[union-attr]
 
     def action_settings(self) -> None:
@@ -109,7 +104,7 @@ class SqtopApp(App):
         def handle(action: str | None) -> None:
             if action is None:
                 return
-            if action in {"jobs", "nodes", "partitions", "health"}:
+            if action in {"jobs", "nodes", "partitions"}:
                 self.action_switch_tab(action)
             elif action == "refresh":
                 self.action_refresh()
@@ -122,5 +117,5 @@ class SqtopApp(App):
 
     def set_refresh_interval(self, interval: float) -> None:
         self.interval = interval
-        for view in self.query("JobsView, NodesView, PartitionsView, HealthView"):
+        for view in self.query("JobsView, NodesView, PartitionsView"):
             view.set_interval_rate(interval)  # type: ignore[union-attr]

@@ -24,7 +24,7 @@ class CommandPaletteScreen(ModalScreen[str | None]):
         background: $surface;
         padding: 1 2;
     }
-    #btn-refresh, #btn-jobs, #btn-nodes, #btn-partitions, #btn-health, #btn-settings, #btn-shot, #btn-close {
+    #btn-refresh, #btn-jobs, #btn-nodes, #btn-partitions, #btn-settings, #btn-shot, #btn-close {
         width: 100%; margin-top: 1;
     }
     """
@@ -36,7 +36,6 @@ class CommandPaletteScreen(ModalScreen[str | None]):
             yield Button("Switch to Jobs", id="btn-jobs")
             yield Button("Switch to Nodes", id="btn-nodes")
             yield Button("Switch to Partitions", id="btn-partitions")
-            yield Button("Switch to Health", id="btn-health")
             yield Button("Open Settings", id="btn-settings")
             yield Button("Save Screenshot", id="btn-shot")
             yield Button("Close  [dim]esc[/]", id="btn-close")
@@ -65,7 +64,6 @@ class CommandPaletteScreen(ModalScreen[str | None]):
             "btn-jobs": "jobs",
             "btn-nodes": "nodes",
             "btn-partitions": "partitions",
-            "btn-health": "health",
             "btn-settings": "settings",
             "btn-shot": "screenshot",
         }
