@@ -18,6 +18,9 @@ sqtop = "sqtop.__main__:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+sqtop = ["styles/*.tcss"]
+
 [dependency-groups]
 dev = [
     "textual-dev>=1.0.0",

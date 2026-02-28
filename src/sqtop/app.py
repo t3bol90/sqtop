@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header, TabbedContent, TabPane
@@ -17,7 +18,7 @@ DEFAULT_INTERVAL = 2.0
 class SqtopApp(App):
     """Slurm TUI dashboard."""
 
-    CSS_PATH = "styles/app.tcss"
+    CSS_PATH = Path(__file__).parent / "styles" / "app.tcss"
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
