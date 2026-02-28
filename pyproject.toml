@@ -1,6 +1,6 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "sqtop"
@@ -15,8 +15,8 @@ dependencies = [
 [project.scripts]
 sqtop = "sqtop.__main__:main"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/sqtop"]
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [dependency-groups]
 dev = [
