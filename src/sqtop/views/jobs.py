@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 
 from textual.app import ComposeResult
@@ -9,8 +10,10 @@ from textual.binding import Binding
 from textual.widgets import DataTable, Label, Static
 from textual import work
 
-from ..slurm import Job, fetch_jobs, fetch_log_paths
+from ..slurm import Job, cancel_job, fetch_job_detail, fetch_jobs, fetch_log_paths
+from .confirm import ConfirmScreen
 from .job_actions import JobActionScreen
+from .job_detail import JobDetailScreen
 from .log_viewer import LogViewerScreen
 from .widgets import CyclicDataTable
 
@@ -56,15 +59,20 @@ def _visible_cols(width: int) -> list[tuple[str, int]]:
 class JobsView(Static):
     """Displays a live squeue-style table."""
 
-    BINDINGS = [Binding("enter", "open_job", "Open job", show=True)]
+    BINDINGS = [
+        Binding("enter", "open_job", "Open job", show=True),
+        Binding("u", "toggle_mine", "My jobs", show=True),
+    ]
 
     def __init__(self, interval: float = 2.0) -> None:
         super().__init__()
         self._interval = interval
+        self._last_jobs_raw: list[Job] = []
         self._last_jobs: list[Job] = []
         self._current_cols: list[tuple[str, int]] = []
         self._fetching = False
         self._timer = None
+        self._filter_mine: bool = False
 
     def compose(self) -> ComposeResult:
         yield Label("", id="jobs-header")
@@ -105,16 +113,27 @@ class JobsView(Static):
         finally:
             self._fetching = False
 
+    def action_toggle_mine(self) -> None:
+        self._filter_mine = not self._filter_mine
+        self._update_table(self._last_jobs_raw)
+
     def _update_table(self, jobs: list[Job]) -> None:
-        self._last_jobs = sorted(jobs, key=_job_sort_key)
+        self._last_jobs_raw = jobs
+        filtered = (
+            [j for j in jobs if j.user == os.getenv("USER", "")]
+            if self._filter_mine else jobs
+        )
+        self._last_jobs = sorted(filtered, key=_job_sort_key)
         self._render_rows(self._last_jobs)
         now = datetime.now().strftime("%H:%M:%S")
         running = sum(1 for j in jobs if j.state == "RUNNING")
         pending = sum(1 for j in jobs if j.state == "PENDING")
+        mine_tag = "  [cyan]· mine[/]" if self._filter_mine else ""
         self.query_one("#jobs-header", Label).update(
             f"[b]squeue[/b]  [green]{running} running[/]  "
             f"[yellow]{pending} pending[/]  "
             f"[dim]{len(jobs)} total  updated {now}[/]"
+            f"{mine_tag}"
         )
 
     def _render_rows(self, jobs: list[Job]) -> None:
@@ -158,8 +177,20 @@ class JobsView(Static):
         def handle_action(action: str | None) -> None:
             if action is None:
                 return
-            stdout_path, stderr_path = fetch_log_paths(job.job_id)
-            log_path = stdout_path if action == "stdout" else stderr_path
-            self.app.push_screen(LogViewerScreen(job.job_id, log_path, action))
+            if action == "detail":
+                data = fetch_job_detail(job.job_id)
+                self.app.push_screen(JobDetailScreen(job.job_id, data))
+            elif action == "cancel":
+                def do_cancel(confirmed: bool) -> None:
+                    if confirmed:
+                        cancel_job(job.job_id)
+                self.app.push_screen(
+                    ConfirmScreen(f"Cancel job {job.job_id} ({job.name})?"),
+                    do_cancel,
+                )
+            else:
+                stdout_path, stderr_path = fetch_log_paths(job.job_id)
+                log_path = stdout_path if action == "stdout" else stderr_path
+                self.app.push_screen(LogViewerScreen(job.job_id, log_path, action))
 
         self.app.push_screen(JobActionScreen(job), handle_action)

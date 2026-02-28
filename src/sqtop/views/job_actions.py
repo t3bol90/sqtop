@@ -1,4 +1,4 @@
-"""Job actions modal — inspect stdout/stderr logs."""
+"""Job actions modal — inspect stdout/stderr logs, view details, cancel."""
 from __future__ import annotations
 
 from textual.app import ComposeResult
@@ -10,7 +10,7 @@ from ..slurm import Job
 
 
 class JobActionScreen(ModalScreen[str | None]):
-    """Show job summary + log file options. Returns 'stdout', 'stderr', or None."""
+    """Show job summary + actions. Returns 'stdout', 'stderr', 'detail', 'cancel', or None."""
 
     BINDINGS = [
         Binding("escape", "dismiss(None)", show=False),
@@ -27,7 +27,7 @@ class JobActionScreen(ModalScreen[str | None]):
         padding: 1 2;
     }
     #dialog .section-title { text-style: bold; color: $primary; margin-top: 1; }
-    #btn-stdout, #btn-stderr { width: 100%; margin-top: 1; }
+    #btn-stdout, #btn-stderr, #btn-detail, #btn-cancel { width: 100%; margin-top: 1; }
     #btn-close { width: 100%; margin-top: 1; }
     """
 
@@ -41,6 +41,8 @@ class JobActionScreen(ModalScreen[str | None]):
             yield Label(f"State: {self._job.state}  User: {self._job.user}", classes="section-title")
             yield Button("View stdout log", id="btn-stdout", variant="primary")
             yield Button("View stderr log", id="btn-stderr", variant="default")
+            yield Button("Show details", id="btn-detail", variant="default")
+            yield Button("Cancel job [dim]scancel[/]", id="btn-cancel", variant="error")
             yield Button("Close  [dim]esc[/]", id="btn-close", variant="default")
 
     def _focused_button_index(self) -> int:
@@ -66,5 +68,9 @@ class JobActionScreen(ModalScreen[str | None]):
             self.dismiss("stdout")
         elif event.button.id == "btn-stderr":
             self.dismiss("stderr")
+        elif event.button.id == "btn-detail":
+            self.dismiss("detail")
+        elif event.button.id == "btn-cancel":
+            self.dismiss("cancel")
         else:
             self.dismiss(None)

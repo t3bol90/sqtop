@@ -5,12 +5,14 @@ from __future__ import annotations
 from datetime import datetime
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.widgets import DataTable, Label, Static
 
 from .widgets import CyclicDataTable
 from textual import work
 
 from ..slurm import Node, fetch_nodes
+from .node_detail import NodeDetailScreen
 
 STATE_COLORS = {
     "idle":      "green",
@@ -54,6 +56,8 @@ def _visible_cols(width: int) -> list[tuple[str, int]]:
 
 class NodesView(Static):
     """Displays a live sinfo-style node table."""
+
+    BINDINGS = [Binding("enter", "open_node", "Open node", show=True)]
 
     def __init__(self, interval: float = 2.0) -> None:
         super().__init__()
@@ -156,3 +160,11 @@ class NodesView(Static):
         visible = [n for n in nodes if n.name]
         if visible:
             table.move_cursor(row=min(saved_row, len(visible) - 1))
+
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        row_idx = event.cursor_row
+        visible = [n for n in self._last_nodes if n.name]
+        if row_idx >= len(visible):
+            return
+        node = visible[row_idx]
+        self.app.push_screen(NodeDetailScreen(node))

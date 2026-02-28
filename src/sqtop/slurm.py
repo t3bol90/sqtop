@@ -207,6 +207,12 @@ def fetch_log_paths(job_id: str) -> tuple[str, str]:
     return stdout, stderr
 
 
+def cancel_job(job_id: str) -> bool:
+    """Run scancel <job_id>. Returns True if command succeeded."""
+    result = subprocess.run(["scancel", job_id], capture_output=True, timeout=10)
+    return result.returncode == 0
+
+
 def tail_log_file(path: str, n: int = 200) -> str:
     """Return last n lines of a log file inside the slurmctld container."""
     if not path:
