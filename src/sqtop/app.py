@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from pathlib import Path
-from textual.app import App, ComposeResult
+from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
+from textual.screen import Screen
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 
 from .views.jobs import JobsView, COLUMNS as JOBS_COLUMNS
 from .views.nodes import NodesView, COLUMNS as NODES_COLUMNS
 from .views.partitions import PartitionsView, COLUMNS as PARTITIONS_COLUMNS
 from .views.column_toggle import ColumnToggleScreen
-from .views.settings import SettingsScreen
-from .views.health import HealthView
 from . import config, slurm
 
 
@@ -27,10 +27,9 @@ class SqtopApp(App):
         Binding("1", "switch_tab('jobs')", "Jobs"),
         Binding("2", "switch_tab('nodes')", "Nodes"),
         Binding("3", "switch_tab('partitions')", "Partitions"),
-        Binding("4", "switch_tab('health')", "Health"),
         Binding("r", "refresh", "Refresh"),
         Binding("P", "save_screenshot", "Screenshot", show=False),
-        Binding("S", "settings", "Settings", show=False),
+        Binding("S", "command_palette", "Commands", show=False),
         Binding("C", "column_toggle", "Columns", show=False),
     ]
 
@@ -62,8 +61,6 @@ class SqtopApp(App):
                 yield NodesView(self.interval)
             with TabPane("Partitions [3]", id="partitions"):
                 yield PartitionsView(self.interval)
-            with TabPane("Health [4]", id="health"):
-                yield HealthView(self.interval)
         yield Footer()
 
     def action_switch_tab(self, tab_id: str) -> None:
@@ -75,7 +72,6 @@ class SqtopApp(App):
             "jobs": "#jobs-table",
             "nodes": "#nodes-table",
             "partitions": "#partitions-table",
-            "health": "#health-table",
         }.get(tab_id)
         if not table_id:
             return
@@ -86,7 +82,7 @@ class SqtopApp(App):
             return
 
     def action_refresh(self) -> None:
-        for view in self.query("JobsView, NodesView, PartitionsView, HealthView"):
+        for view in self.query("JobsView, NodesView, PartitionsView"):
             view.refresh_data()  # type: ignore[union-attr]
 
     def action_column_toggle(self) -> None:
@@ -112,15 +108,70 @@ class SqtopApp(App):
 
         self.push_screen(ColumnToggleScreen(active, all_cols, hidden), _make_callback(view))
 
-    def action_settings(self) -> None:
-        self.push_screen(
-            SettingsScreen(
-                self.theme,
-                self.interval,
-                self.expert_mode,
-                self.confirm_cancel_single,
-                self.confirm_bulk_actions,
+    def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
+        yield from super().get_system_commands(screen)
+        yield SystemCommand("Refresh data", "Refresh all views now", self.action_refresh)
+        for secs in [1.0, 2.0, 5.0, 10.0, 30.0]:
+            label = f"{secs:.0f}s"
+            yield SystemCommand(
+                f"Set refresh: {label}",
+                f"Set auto-refresh interval to {label}",
+                lambda s=secs: self._set_interval_and_save(s),
+                discover=False,
             )
+        mode = "on" if self.expert_mode else "off"
+        yield SystemCommand(
+            f"Expert mode: {mode} → toggle",
+            "Toggle expert mode (fewer confirmation dialogs)",
+            self._toggle_expert_mode,
+        )
+        ccs = "on" if self.confirm_cancel_single else "off"
+        yield SystemCommand(
+            f"Confirm single cancel: {ccs} → toggle",
+            "Toggle confirmation dialog for single job cancel",
+            self._toggle_confirm_cancel_single,
+        )
+        cba = "on" if self.confirm_bulk_actions else "off"
+        yield SystemCommand(
+            f"Confirm bulk actions: {cba} → toggle",
+            "Toggle confirmation for bulk operations",
+            self._toggle_confirm_bulk_actions,
+        )
+        yield SystemCommand(
+            "Column visibility",
+            "Show/hide columns for the current view",
+            self.action_column_toggle,
+        )
+        yield SystemCommand(
+            "Save screenshot",
+            "Save a screenshot of sqtop",
+            self.action_save_screenshot,
+            discover=False,
+        )
+
+    def _set_interval_and_save(self, secs: float) -> None:
+        self.set_refresh_interval(secs)
+        config.save(self.theme, secs)
+
+    def _toggle_expert_mode(self) -> None:
+        self.expert_mode = not self.expert_mode
+        config.update({"ui": {"expert_mode": self.expert_mode}})
+        self.notify(f"Expert mode: {'on' if self.expert_mode else 'off'}", title="Settings")
+
+    def _toggle_confirm_cancel_single(self) -> None:
+        self.confirm_cancel_single = not self.confirm_cancel_single
+        config.update({"safety": {"confirm_cancel_single": self.confirm_cancel_single}})
+        self.notify(
+            f"Confirm single cancel: {'on' if self.confirm_cancel_single else 'off'}",
+            title="Settings",
+        )
+
+    def _toggle_confirm_bulk_actions(self) -> None:
+        self.confirm_bulk_actions = not self.confirm_bulk_actions
+        config.update({"safety": {"confirm_bulk_actions": self.confirm_bulk_actions}})
+        self.notify(
+            f"Confirm bulk actions: {'on' if self.confirm_bulk_actions else 'off'}",
+            title="Settings",
         )
 
     def action_save_screenshot(self) -> None:
@@ -146,5 +197,5 @@ class SqtopApp(App):
 
     def set_refresh_interval(self, interval: float) -> None:
         self.interval = interval
-        for view in self.query("JobsView, NodesView, PartitionsView, HealthView"):
+        for view in self.query("JobsView, NodesView, PartitionsView"):
             view.set_interval_rate(interval)  # type: ignore[union-attr]
