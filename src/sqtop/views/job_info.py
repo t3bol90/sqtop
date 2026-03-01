@@ -7,7 +7,7 @@ from textual.binding import Binding
 from textual.screen import ModalScreen
 from textual.containers import ScrollableContainer
 from textual.widgets import Label, Static
-from textual.worker import work
+from textual import work
 
 from ..slurm import Job, fetch_job_detail, fetch_job_dependencies
 
