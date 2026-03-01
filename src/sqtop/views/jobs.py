@@ -39,6 +39,85 @@ _TERMINAL_STATES = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", 
 _ATTACH_STATES = {"RUNNING"}
 
 
+def _parse_slurm_duration(s: str) -> int:
+    """Convert a Slurm time string to total seconds.
+
+    Supports: D-HH:MM:SS, HH:MM:SS, MM:SS, SS.
+    Returns -1 for UNLIMITED, INVALID, empty string, or unparseable values.
+    """
+    if not s:
+        return -1
+    su = s.strip().upper()
+    if su in {"UNLIMITED", "INVALID", "INFINITE", "N/A", "NOT_SET"}:
+        return -1
+
+    days = 0
+    rest = su
+    if "-" in rest:
+        day_part, _, rest = rest.partition("-")
+        try:
+            days = int(day_part)
+        except ValueError:
+            return -1
+
+    parts = rest.split(":")
+    try:
+        if len(parts) == 3:
+            hours, minutes, seconds = int(parts[0]), int(parts[1]), int(parts[2])
+        elif len(parts) == 2:
+            hours, minutes, seconds = 0, int(parts[0]), int(parts[1])
+        elif len(parts) == 1:
+            hours, minutes, seconds = 0, 0, int(parts[0])
+        else:
+            return -1
+    except ValueError:
+        return -1
+
+    return days * 86400 + hours * 3600 + minutes * 60 + seconds
+
+
+def _format_duration(total_seconds: int) -> str:
+    """Format seconds back into D-HH:MM:SS or HH:MM:SS."""
+    if total_seconds < 0:
+        return "—"
+    days, remainder = divmod(total_seconds, 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if days > 0:
+        return f"{days}-{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _time_left(job: Job) -> tuple[str, str]:
+    """Return (display_str, color) for remaining wall-clock time."""
+    limit_secs = _parse_slurm_duration(job.time_limit)
+    if limit_secs < 0:
+        return ("UNLIMITED", "dim")
+
+    used_secs = _parse_slurm_duration(job.time_used)
+    if used_secs < 0:
+        return ("—", "dim")
+
+    remaining = limit_secs - used_secs
+    if remaining < 0:
+        remaining = 0
+
+    display = _format_duration(remaining)
+
+    if limit_secs == 0:
+        color = "dim"
+    else:
+        pct = remaining / limit_secs
+        if pct > 0.50:
+            color = "green"
+        elif pct >= 0.10:
+            color = "yellow"
+        else:
+            color = "red"
+
+    return (display, color)
+
+
 def _job_sort_key(job: Job) -> tuple:
     priority = _STATE_ORDER.get(job.state, 3)
     job_id = int(job.job_id) if job.job_id.isdigit() else 0
@@ -93,6 +172,7 @@ COLUMNS: list[tuple[str, int, int]] = [
     ("STATE",             10,   0),
     ("USER",               8,  65),
     ("TIME",              10,  65),
+    ("TIME_LEFT",         10,  65),
     ("PARTITION",          9,  90),
     ("NODES",              6,  90),
     ("CPUS",               6, 105),
@@ -245,6 +325,9 @@ class JobsView(BaseDataTableView[Job]):
             return job.user
         if col_name == "TIME":
             return job.time_used
+        if col_name == "TIME_LEFT":
+            display, _ = _time_left(job)
+            return display
         if col_name == "PARTITION":
             return job.partition
         if col_name == "NODES":
@@ -711,6 +794,9 @@ class JobsView(BaseDataTableView[Job]):
                     row.append(f"[{color}]{self._cell_text(job, name)}[/]")
                 elif name == "STATE":
                     row.append(f"[{color}]{self._cell_text(job, name)}[/]")
+                elif name == "TIME_LEFT":
+                    tl_display, tl_color = _time_left(job)
+                    row.append(f"[{tl_color}]{tl_display}[/]")
                 else:
                     row.append(self._cell_text(job, name))
             table.add_row(*row)
