@@ -1,6 +1,7 @@
 """Job detail modal — shows scontrol show job output."""
 from __future__ import annotations
 
+from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import ModalScreen
@@ -87,17 +88,21 @@ class JobDetailScreen(ModalScreen[None]):
 
     def on_mount(self) -> None:
         self.query_one("#job-detail-view", DetailView).show_job(self._data)
-        self._maybe_show_efficiency()
-
-    def _maybe_show_efficiency(self) -> None:
-        """Fetch and display efficiency bars for terminal-state jobs."""
         state = self._data.get("JobState", "").upper()
-        eff_widget = self.query_one("#job-detail-efficiency", Static)
-        if state not in _TERMINAL_STATES:
-            eff_widget.display = False
-            return
+        if state in _TERMINAL_STATES:
+            self._load_efficiency()
+        else:
+            self.query_one("#job-detail-efficiency", Static).display = False
+
+    @work(thread=True)
+    def _load_efficiency(self) -> None:
+        """Fetch and display efficiency bars for terminal-state jobs (background thread)."""
         eff = fetch_job_efficiency(self._job_id)
         if not eff.get("available") or (eff["mem_peak_mb"] == 0 and eff["cpu_eff"] == 0.0):
-            eff_widget.display = False
+            self.app.call_from_thread(self._hide_efficiency)
             return
-        eff_widget.update(_build_efficiency_text(eff))
+        text = _build_efficiency_text(eff)
+        self.app.call_from_thread(self.query_one("#job-detail-efficiency", Static).update, text)
+
+    def _hide_efficiency(self) -> None:
+        self.query_one("#job-detail-efficiency", Static).display = False
