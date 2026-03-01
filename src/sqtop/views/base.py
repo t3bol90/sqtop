@@ -44,6 +44,15 @@ class BaseDataTableView(Static, Generic[T]):
         """Start the periodic refresh timer."""
         self._timer = self.set_interval(self._interval, self.refresh_data)
 
+    def start_refresh_loop(self) -> None:
+        """Defer first fetch slightly so initial UI and keybindings become responsive."""
+        delay = self._start_offset if self._start_offset > 0 else 0.05
+        self.set_timer(delay, self._start_now)
+
+    def _start_now(self) -> None:
+        self.refresh_data()
+        self._begin_interval()
+
     def set_interval_rate(self, interval: float) -> None:
         """Change the auto-refresh interval."""
         self._interval = interval

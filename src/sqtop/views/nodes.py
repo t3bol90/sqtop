@@ -113,11 +113,7 @@ class NodesView(BaseDataTableView[Node]):
 
     def on_mount(self) -> None:
         self._rebuild_columns(self.size.width)
-        self.refresh_data()
-        if self._start_offset > 0:
-            self.set_timer(self._start_offset, self._begin_interval)
-        else:
-            self._begin_interval()
+        self.start_refresh_loop()
 
     def _fetch_data(self) -> list[Node]:
         return fetch_nodes()
