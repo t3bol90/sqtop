@@ -115,18 +115,18 @@ class SqtopApp(App):
         self.push_screen(ColumnToggleScreen(active, all_cols, hidden), _make_callback(view))
 
     def action_show_keybindings(self) -> None:
-        active = self.query_one(TabbedContent).active
-        if active == "jobs":
-            pane_name = "Jobs"
-            pane_bindings = list(JobsView.BINDINGS)
-        elif active == "nodes":
+        pane_name = "Jobs"
+        pane_bindings = list(JobsView.BINDINGS)
+        try:
+            active = self.query_one(TabbedContent).active or "jobs"
+        except Exception:
+            active = "jobs"
+        if active == "nodes":
             pane_name = "Nodes"
             pane_bindings = list(NodesView.BINDINGS)
         elif active == "partitions":
             pane_name = "Partitions"
             pane_bindings = list(PartitionsView.BINDINGS)
-        else:
-            return
         self.push_screen(KeybindingHelpScreen(pane_name, list(self.BINDINGS), pane_bindings))
 
     def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:

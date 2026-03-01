@@ -84,7 +84,11 @@ class KeybindingHelpScreen(ModalScreen[None]):
             log.write(f"  [cyan]{key:<12}[/] {desc}")
         log.write("")
         log.write(f"[b]{self._pane_name}[/b]")
-        for key, desc in format_bindings(self._pane_bindings):
-            log.write(f"  [cyan]{key:<12}[/] {desc}")
+        pane_rows = format_bindings(self._pane_bindings)
+        if pane_rows:
+            for key, desc in pane_rows:
+                log.write(f"  [cyan]{key:<12}[/] {desc}")
+        else:
+            log.write("  [dim]Pane keybindings are still loading...[/]")
         log.write("")
         log.write("[dim]Press Esc, q, or ? to close[/]")
