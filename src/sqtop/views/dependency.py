@@ -62,9 +62,9 @@ class JobDependencyScreen(ModalScreen[None]):
             yield RichLog(id="dep-output", highlight=True, markup=True)
 
     def on_mount(self) -> None:
-        self.call_after_refresh(self._start)
+        self.call_after_refresh(self._load)
 
-    def _start(self) -> None:
+    def _load(self) -> None:
         self.query_one("#dep-output", RichLog).write("[dim]Loading…[/]")
         self.fetch_deps()
 
