@@ -5,12 +5,13 @@ from __future__ import annotations
 import os
 from datetime import datetime
 
-from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.widgets import Label
+from textual.screen import ModalScreen
+from textual.widgets import Button, Label, Static
 
 from .base import BaseDataTableView
+from .mixins import ModalButtonNavMixin
 from ..slurm import SacctJob, fetch_log_paths, fetch_sacct_jobs
 from .log_viewer import LogViewerScreen
 from .widgets import CyclicDataTable
@@ -35,12 +36,53 @@ COLUMNS: list[tuple[str, int]] = [
 _DEFAULT_HOURS = 24
 
 
+class HistoryActionScreen(ModalButtonNavMixin, ModalScreen[str | None]):
+    """Action menu for a completed/failed job in the history view."""
+
+    BINDINGS = [
+        *ModalButtonNavMixin.BINDINGS,
+        Binding("escape", "dismiss(None)", show=False),
+    ]
+
+    CSS = """
+    HistoryActionScreen { align: center middle; }
+    #dialog {
+        width: 50; height: auto;
+        border: double $primary;
+        background: $surface;
+        padding: 1 2;
+    }
+    #dialog Label { text-style: bold; color: $primary; }
+    #btn-stdout, #btn-stderr, #btn-close { width: 100%; margin-top: 1; }
+    """
+
+    def __init__(self, job: SacctJob) -> None:
+        super().__init__()
+        self._job = job
+
+    def compose(self) -> ComposeResult:
+        with Static(id="dialog"):
+            yield Label(f"Job {self._job.job_id} — {self._job.name}")
+            yield Label(f"State: {self._job.state}  User: {self._job.user}")
+            yield Button("View stdout log", id="btn-stdout", variant="primary")
+            yield Button("View stderr log", id="btn-stderr", variant="default")
+            yield Button("Close  [dim]esc[/]", id="btn-close", variant="default")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-stdout":
+            self.dismiss("stdout")
+        elif event.button.id == "btn-stderr":
+            self.dismiss("stderr")
+        else:
+            self.dismiss(None)
+
+
 class HistoryView(BaseDataTableView[SacctJob]):
     """Displays recently completed/failed jobs via sacct."""
 
     BINDINGS = [
-        Binding("m", "toggle_mine", "Mine", show=True),
-        Binding("l", "view_log", "Log", show=False),
+        Binding("enter", "open_job", "Open", show=True),
+        Binding("u", "toggle_mine", "My jobs", show=False),
     ]
 
     def __init__(self, interval: float = 30.0, start_offset: float = 0.0, hours: int = _DEFAULT_HOURS) -> None:
@@ -81,20 +123,21 @@ class HistoryView(BaseDataTableView[SacctJob]):
         self._filter_mine = not self._filter_mine
         self._update_table(self._last_jobs_raw)
 
-    @work(thread=True)
-    def action_view_log(self) -> None:
+    def action_open_job(self) -> None:
         job = self._job_for_cursor()
         if not job:
             return
-        stdout_path, _ = fetch_log_paths(job.job_id)
-        if not stdout_path:
-            self.app.call_from_thread(
-                self.app.notify, "No log path found for this job", severity="warning"
-            )
-            return
-        self.app.call_from_thread(
-            self.app.push_screen, LogViewerScreen(job.job_id, stdout_path, "stdout")
-        )
+
+        def handle_action(action: str | None) -> None:
+            if action in ("stdout", "stderr"):
+                stdout_path, stderr_path = fetch_log_paths(job.job_id)
+                log_path = stdout_path if action == "stdout" else stderr_path
+                if not log_path:
+                    self.app.notify("No log path found for this job", severity="warning")
+                    return
+                self.app.push_screen(LogViewerScreen(job.job_id, log_path, action))
+
+        self.app.push_screen(HistoryActionScreen(job), handle_action)
 
     def _update_table(self, data: list[SacctJob]) -> None:
         self._last_jobs_raw = data
