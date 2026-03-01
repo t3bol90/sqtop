@@ -373,6 +373,36 @@ def fetch_command_health(limit: int = 100) -> list[CommandStat]:
 
 
 # ---------------------------------------------------------------------------
+# Job array tasks
+# ---------------------------------------------------------------------------
+
+def fetch_array_tasks(job_id: str) -> list[Job]:
+    """Fetch individual tasks for a job array via squeue -j <job_id>."""
+    fmt = "%i|%j|%u|%T|%P|%D|%C|%M|%l|%R|%N"
+    out = _run(f"squeue --noheader -j {shlex.quote(job_id)} -o '{fmt}'")
+    jobs = []
+    for line in out.strip().splitlines():
+        parts = line.split("|")
+        if len(parts) < 11:
+            continue
+        jobs.append(Job(
+            job_id=parts[0],
+            name=parts[1],
+            user=parts[2],
+            state=parts[3],
+            partition=parts[4],
+            nodes=parts[5],
+            num_cpus=parts[6],
+            time_used=parts[7],
+            time_limit=parts[8],
+            reason=parts[9],
+            nodelist=parts[10],
+            num_nodes=parts[5],
+        ))
+    return jobs
+
+
+# ---------------------------------------------------------------------------
 # Job dependencies
 # ---------------------------------------------------------------------------
 
