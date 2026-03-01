@@ -51,6 +51,8 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
     def __init__(self, interval: float = 5.0, start_offset: float = 0.0) -> None:
         super().__init__(interval=interval, start_offset=start_offset)
         self._last_summaries: list[ClusterSummary] = []
+        self._last_sorted_rows: list[ClusterSummary] = []
+        self._last_render_fp: tuple = ()
         cfg_all = config.load()
         view_state = cfg_all.get("view_state", {})
         saved_sort = str(view_state.get("partitions_sort_col", ""))
@@ -76,7 +78,7 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
         cfg = config.load()
         self._hidden_cols = set(cfg.get("columns", {}).get("partitions_hidden", []))
         self._rebuild_columns()
-        self._render_rows(self._last_summaries)
+        self._render_rows(self._last_sorted_rows)
 
     def on_mount(self) -> None:
         self._rebuild_columns()
@@ -91,7 +93,8 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
     def _set_sort(self, col: str) -> None:
         super()._set_sort(col)
         config.update({"view_state": {"partitions_sort_col": self._sort_col or "", "partitions_sort_reversed": self._sort_reversed}})
-        self._render_rows(self._last_summaries)
+        self._last_sorted_rows = self._sorted_rows(self._last_summaries)
+        self._render_rows(self._last_sorted_rows)
 
     def action_sort_partition(self) -> None:
         self._set_sort("partition")
@@ -100,16 +103,24 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
         self._set_sort("nodes")
 
     def _update_table(self, summaries: list[ClusterSummary]) -> None:
-        state = self._capture_table_state()
         self._last_summaries = summaries
-        self._render_rows(summaries)
-        self._restore_table_state(state, self._sorted_rows(summaries))
+        self._last_sorted_rows = self._sorted_rows(summaries)
+
         now = datetime.now().strftime("%H:%M:%S")
         up = sum(1 for s in summaries if s.avail.lower() == "up")
         self.query_one("#partitions-header", Label).update(
             f"[b]sinfo[/b]  [green]{up} up[/]  "
             f"[dim]{len(summaries)} partitions  updated {now}[/]"
         )
+
+        new_fp = tuple((s.partition, s.state, s.nodes) for s in self._last_sorted_rows)
+        if new_fp == self._last_render_fp:
+            return
+        self._last_render_fp = new_fp
+
+        state = self._capture_table_state()
+        self._render_rows(self._last_sorted_rows)
+        self._restore_table_state(state, self._last_sorted_rows)
 
     def _sorted_rows(self, summaries: list[ClusterSummary]) -> list[ClusterSummary]:
         rows = list(summaries)
@@ -128,9 +139,8 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
         row = table.cursor_row
         scroll_y = float(table.scroll_offset.y)
         anchor: str | None = None
-        rows = self._sorted_rows(self._last_summaries)
-        if 0 <= row < len(rows):
-            anchor = rows[row].partition
+        if 0 <= row < len(self._last_sorted_rows):
+            anchor = self._last_sorted_rows[row].partition
         return row, scroll_y, anchor
 
     def _restore_table_state(
@@ -167,13 +177,11 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
             return f"[{state_color}]{s.state}[/]"
         return s.nodelist
 
-    def _render_rows(self, summaries: list[ClusterSummary]) -> None:
-        rows = self._sorted_rows(summaries)
+    def _render_rows(self, sorted_rows: list[ClusterSummary]) -> None:
         visible = self._visible_cols_filtered()
-
         table = self.query_one(CyclicDataTable)
         table.clear()
-        for s in rows:
+        for s in sorted_rows:
             table.add_row(*[self._cell_for_col(s, name) for name, _ in visible])
-        if rows and table.cursor_row < 0:
+        if sorted_rows and table.cursor_row < 0:
             table.move_cursor(row=0)

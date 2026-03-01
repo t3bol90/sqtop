@@ -206,6 +206,7 @@ class JobsView(BaseDataTableView[Job]):
         self._desktop_notify_enabled = bool(
             cfg_all.get("notifications", {}).get("desktop_enabled", True)
         )
+        self._last_render_fp: tuple = ()
 
     def compose(self) -> ComposeResult:
         yield Label("", id="jobs-header")
@@ -612,6 +613,16 @@ class JobsView(BaseDataTableView[Job]):
             key_fn = _SORT_KEYS[self._sort_col]
             self._last_jobs = sorted(filtered, key=key_fn, reverse=self._sort_reversed)
         self._last_jobs_index = {j.job_id: i for i, j in enumerate(self._last_jobs)}
+
+        new_fp = (
+            tuple((j.job_id, j.state) for j in self._last_jobs),
+            frozenset(self._watched_states),
+            frozenset(self._selected_job_ids),
+        )
+        if new_fp == self._last_render_fp:
+            self._update_header(jobs)
+            return
+        self._last_render_fp = new_fp
 
         self._rebuild_columns(self.size.width, self._last_jobs)
         self._render_rows(self._last_jobs)

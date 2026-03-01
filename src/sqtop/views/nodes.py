@@ -97,6 +97,8 @@ class NodesView(BaseDataTableView[Node]):
         super().__init__(interval=interval, start_offset=start_offset)
         self._last_nodes: list[Node] = []
         self._last_nodes_index: dict[str, int] = {}
+        self._last_sorted_nodes: list[Node] = []
+        self._last_render_fp: tuple = ()
         self._current_cols: list[tuple[str, int]] = []
         cfg_all = config.load()
         view_state = cfg_all.get("view_state", {})
@@ -126,8 +128,8 @@ class NodesView(BaseDataTableView[Node]):
         if new_cols != self._current_cols:
             state = self._capture_table_state()
             self._rebuild_columns(event.size.width)
-            self._render_rows(self._last_nodes)
-            self._restore_table_state(state, self._sorted_visible(self._last_nodes))
+            self._render_rows(self._last_sorted_nodes)
+            self._restore_table_state(state, self._last_sorted_nodes)
 
     def _visible_cols_filtered(self, width: int) -> list[tuple[str, int]]:
         return [
@@ -147,16 +149,15 @@ class NodesView(BaseDataTableView[Node]):
         cfg = config.load()
         self._hidden_cols = set(cfg.get("columns", {}).get("nodes_hidden", []))
         self._rebuild_columns(self.size.width)
-        self._render_rows(self._last_nodes)
+        self._render_rows(self._last_sorted_nodes)
 
     def _capture_table_state(self) -> tuple[int, float, str | None]:
         table = self.query_one(CyclicDataTable)
         row = table.cursor_row
         scroll_y = float(table.scroll_offset.y)
         anchor: str | None = None
-        rows = self._sorted_visible(self._last_nodes)
-        if 0 <= row < len(rows):
-            anchor = rows[row].name
+        if 0 <= row < len(self._last_sorted_nodes):
+            anchor = self._last_sorted_nodes[row].name
         return row, scroll_y, anchor
 
     def _restore_table_state(self, state: tuple[int, float, str | None], rows: list[Node]) -> None:
@@ -173,7 +174,8 @@ class NodesView(BaseDataTableView[Node]):
     def _set_sort(self, col: str) -> None:
         super()._set_sort(col)
         config.update({"view_state": {"nodes_sort_col": self._sort_col or "", "nodes_sort_reversed": self._sort_reversed}})
-        self._render_rows(self._last_nodes)
+        self._last_sorted_nodes = self._sorted_visible(self._last_nodes)
+        self._render_rows(self._last_sorted_nodes)
 
     def action_sort_state(self) -> None:
         self._set_sort("state")
@@ -194,19 +196,20 @@ class NodesView(BaseDataTableView[Node]):
             return sorted(visible, key=_free_mem, reverse=self._sort_reversed)
         return visible
 
-    def _update_table(self, nodes: list[Node]) -> None:
-        state = self._capture_table_state()
-        self._last_nodes = nodes
-        self._render_rows(nodes)
-        sorted_nodes = self._sorted_visible(nodes)
-        self._last_nodes_index = {n.name: i for i, n in enumerate(sorted_nodes)}
-        self._restore_table_state(state, sorted_nodes)
+    def _update_nodes_header(self, nodes: list[Node]) -> None:
         now = datetime.now().strftime("%H:%M:%S")
         visible = [n for n in nodes if n.name]
-        idle  = sum(1 for n in visible if "idle"  in n.state.lower())
-        alloc = sum(1 for n in visible if "alloc" in n.state.lower())
-        mixed = sum(1 for n in visible if "mixed" in n.state.lower())
-        down  = sum(1 for n in visible if "down"  in n.state.lower() or "drain" in n.state.lower())
+        idle = alloc = mixed = down = 0
+        for n in visible:
+            s = n.state.lower()
+            if "idle" in s:
+                idle += 1
+            elif "alloc" in s:
+                alloc += 1
+            elif "mixed" in s:
+                mixed += 1
+            if "down" in s or "drain" in s:
+                down += 1
         sort_tag = ""
         if self._sort_col:
             arrow = "↑" if self._sort_reversed else "↓"
@@ -220,8 +223,24 @@ class NodesView(BaseDataTableView[Node]):
             f"{sort_tag}{warn_tag}"
         )
 
-    def _render_rows(self, nodes: list[Node]) -> None:
-        rows = self._sorted_visible(nodes)
+    def _update_table(self, nodes: list[Node]) -> None:
+        state = self._capture_table_state()
+        self._last_nodes = nodes
+        self._last_sorted_nodes = self._sorted_visible(nodes)
+        self._last_nodes_index = {n.name: i for i, n in enumerate(self._last_sorted_nodes)}
+
+        new_fp = tuple((n.name, n.state, n.cpus_alloc, n.gpu_alloc) for n in self._last_sorted_nodes)
+        if new_fp == self._last_render_fp:
+            self._update_nodes_header(nodes)
+            return
+        self._last_render_fp = new_fp
+
+        self._render_rows(self._last_sorted_nodes)
+        self._restore_table_state(state, self._last_sorted_nodes)
+        self._update_nodes_header(nodes)
+
+    def _render_rows(self, sorted_rows: list[Node] | None = None) -> None:
+        rows = sorted_rows if sorted_rows is not None else self._sorted_visible(self._last_nodes)
         table = self.query_one(CyclicDataTable)
         table.clear()
         for node in rows:
@@ -259,7 +278,7 @@ class NodesView(BaseDataTableView[Node]):
             table.move_cursor(row=0)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        rows = self._sorted_visible(self._last_nodes)
+        rows = self._last_sorted_nodes
         row_idx = event.cursor_row
         if row_idx >= len(rows):
             return
