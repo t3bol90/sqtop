@@ -13,6 +13,7 @@ from .views.jobs import JobsView, COLUMNS as JOBS_COLUMNS
 from .views.nodes import NodesView, COLUMNS as NODES_COLUMNS
 from .views.partitions import PartitionsView, COLUMNS as PARTITIONS_COLUMNS
 from .views.column_toggle import ColumnToggleScreen
+from .views.keybindings_help import KeybindingHelpScreen
 from . import config, slurm
 
 
@@ -32,6 +33,7 @@ class SqtopApp(App):
         Binding("S", "command_palette", "Commands", show=False),
         Binding("ctrl+p", "command_palette", "Commands", show=False),
         Binding("C", "column_toggle", "Columns", show=False),
+        Binding("question_mark", "show_keybindings", "Keybindings", show=False),
     ]
 
     TITLE = "sqtop"
@@ -118,6 +120,21 @@ class SqtopApp(App):
             return lambda _: v._reload_column_visibility()
 
         self.push_screen(ColumnToggleScreen(active, all_cols, hidden), _make_callback(view))
+
+    def action_show_keybindings(self) -> None:
+        active = self.query_one(TabbedContent).active
+        if active == "jobs":
+            pane_name = "Jobs"
+            pane_bindings = list(JobsView.BINDINGS)
+        elif active == "nodes":
+            pane_name = "Nodes"
+            pane_bindings = list(NodesView.BINDINGS)
+        elif active == "partitions":
+            pane_name = "Partitions"
+            pane_bindings = list(PartitionsView.BINDINGS)
+        else:
+            return
+        self.push_screen(KeybindingHelpScreen(pane_name, list(self.BINDINGS), pane_bindings))
 
     def get_system_commands(self, screen: Screen) -> Iterable[SystemCommand]:
         yield from super().get_system_commands(screen)

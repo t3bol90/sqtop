@@ -117,6 +117,7 @@ Attach behavior:
 | `r` | Refresh all tabs |
 | `Shift+P` | Save screenshot to `~/.cache/sqtop/screenshots` |
 | `Shift+C` | Column visibility toggle for current tab |
+| `?` | Show keybindings for current pane |
 | `Ctrl+C` | Quit |
 | `q` | Quit |
 
