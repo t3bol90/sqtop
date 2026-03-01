@@ -7,11 +7,13 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 
-from .views.jobs import JobsView
-from .views.nodes import NodesView
-from .views.partitions import PartitionsView
+from .views.jobs import JobsView, COLUMNS as JOBS_COLUMNS
+from .views.nodes import NodesView, COLUMNS as NODES_COLUMNS
+from .views.partitions import PartitionsView, COLUMNS as PARTITIONS_COLUMNS
+from .views.column_toggle import ColumnToggleScreen
 from .views.settings import SettingsScreen
-from . import config
+from .views.health import HealthView
+from . import config, slurm
 
 
 class SqtopApp(App):
@@ -25,9 +27,11 @@ class SqtopApp(App):
         Binding("1", "switch_tab('jobs')", "Jobs"),
         Binding("2", "switch_tab('nodes')", "Nodes"),
         Binding("3", "switch_tab('partitions')", "Partitions"),
+        Binding("4", "switch_tab('health')", "Health"),
         Binding("r", "refresh", "Refresh"),
         Binding("P", "save_screenshot", "Screenshot", show=False),
         Binding("S", "settings", "Settings", show=False),
+        Binding("C", "column_toggle", "Columns", show=False),
     ]
 
     TITLE = "sqtop"
@@ -43,7 +47,10 @@ class SqtopApp(App):
 
     def on_mount(self) -> None:
         self.theme = self._saved_theme
-        self.sub_title = "Slurm Dashboard"
+        if slurm._SSH_HOST:
+            self.sub_title = f"Slurm Dashboard — {slurm._SSH_HOST}"
+        else:
+            self.sub_title = "Slurm Dashboard"
         self.call_after_refresh(self._focus_table_for_tab, "jobs")
 
     def compose(self) -> ComposeResult:
@@ -55,6 +62,8 @@ class SqtopApp(App):
                 yield NodesView(self.interval)
             with TabPane("Partitions [3]", id="partitions"):
                 yield PartitionsView(self.interval)
+            with TabPane("Health [4]", id="health"):
+                yield HealthView(self.interval)
         yield Footer()
 
     def action_switch_tab(self, tab_id: str) -> None:
@@ -66,6 +75,7 @@ class SqtopApp(App):
             "jobs": "#jobs-table",
             "nodes": "#nodes-table",
             "partitions": "#partitions-table",
+            "health": "#health-table",
         }.get(tab_id)
         if not table_id:
             return
@@ -76,8 +86,31 @@ class SqtopApp(App):
             return
 
     def action_refresh(self) -> None:
-        for view in self.query("JobsView, NodesView, PartitionsView"):
+        for view in self.query("JobsView, NodesView, PartitionsView, HealthView"):
             view.refresh_data()  # type: ignore[union-attr]
+
+    def action_column_toggle(self) -> None:
+        active = self.query_one(TabbedContent).active
+        cfg = config.load()
+        if active == "jobs":
+            view = self.query_one(JobsView)
+            all_cols = [name for name, _, _ in JOBS_COLUMNS]
+            hidden = list(cfg.get("columns", {}).get("jobs_hidden", []))
+        elif active == "nodes":
+            view = self.query_one(NodesView)
+            all_cols = [name for name, _, _ in NODES_COLUMNS]
+            hidden = list(cfg.get("columns", {}).get("nodes_hidden", []))
+        elif active == "partitions":
+            view = self.query_one(PartitionsView)
+            all_cols = [name for name, _ in PARTITIONS_COLUMNS]
+            hidden = list(cfg.get("columns", {}).get("partitions_hidden", []))
+        else:
+            return
+
+        def _make_callback(v):
+            return lambda _: v._reload_column_visibility()
+
+        self.push_screen(ColumnToggleScreen(active, all_cols, hidden), _make_callback(view))
 
     def action_settings(self) -> None:
         self.push_screen(
@@ -113,5 +146,5 @@ class SqtopApp(App):
 
     def set_refresh_interval(self, interval: float) -> None:
         self.interval = interval
-        for view in self.query("JobsView, NodesView, PartitionsView"):
+        for view in self.query("JobsView, NodesView, PartitionsView, HealthView"):
             view.set_interval_rate(interval)  # type: ignore[union-attr]
