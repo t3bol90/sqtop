@@ -62,14 +62,21 @@ class SqtopApp(App):
             with TabPane("Jobs [1]", id="jobs"):
                 yield JobsView(self.interval)
             with TabPane("Nodes [2]", id="nodes"):
-                yield NodesView(self.interval)
+                yield NodesView(self.interval, start_offset=0.7)
             with TabPane("Partitions [3]", id="partitions"):
-                yield PartitionsView(self.interval)
+                yield PartitionsView(self.interval, start_offset=1.4)
         yield Footer()
 
     def action_switch_tab(self, tab_id: str) -> None:
         self.query_one(TabbedContent).active = tab_id
         self.call_after_refresh(self._focus_table_for_tab, tab_id)
+        _view_cls = {"jobs": JobsView, "nodes": NodesView, "partitions": PartitionsView}
+        cls = _view_cls.get(tab_id)
+        if cls:
+            try:
+                self.query_one(cls).refresh_data()
+            except Exception:
+                pass
 
     def _focus_table_for_tab(self, tab_id: str) -> None:
         table_id = {

@@ -166,11 +166,14 @@ class JobsView(BaseDataTableView[Job]):
         Binding("D", "view_dependencies", "Deps", show=False),
     ]
 
-    def __init__(self, interval: float = 2.0) -> None:
-        super().__init__(interval=interval)
+    def __init__(self, interval: float = 2.0, start_offset: float = 0.0) -> None:
+        super().__init__(interval=interval, start_offset=start_offset)
         self._last_jobs_raw: list[Job] = []
         self._last_jobs: list[Job] = []
+        self._last_jobs_index: dict[str, int] = {}
         self._current_cols: list[tuple[str, int]] = []
+        self._rebuild_cache_width: int = -1
+        self._rebuild_cache_names: list[str] = []
         self._filter_mine: bool = False
         self._search_query: str = ""
         self._watched_states: dict[str, str] = {}  # job_id → last known state
@@ -214,9 +217,12 @@ class JobsView(BaseDataTableView[Job]):
 
     def on_mount(self) -> None:
         self.query_one("#search-bar", Input).display = False
-        self._rebuild_columns(self.size.width, [])
+        self._rebuild_columns(self.size.width, [], force=True)
         self.refresh_data()
-        self._timer = self.set_interval(self._interval, self.refresh_data)
+        if self._start_offset > 0:
+            self.set_timer(self._start_offset, self._begin_interval)
+        else:
+            self._begin_interval()
 
     def _fetch_data(self) -> list[Job]:
         return fetch_jobs()
@@ -226,7 +232,7 @@ class JobsView(BaseDataTableView[Job]):
 
     def on_resize(self, event) -> None:
         state = self._capture_table_state()
-        self._rebuild_columns(event.size.width, self._last_jobs)
+        self._rebuild_columns(event.size.width, self._last_jobs, force=True)
         self._render_rows(self._last_jobs)
         self._restore_table_state(state, self._last_jobs)
 
@@ -261,8 +267,13 @@ class JobsView(BaseDataTableView[Job]):
             if min_term_w <= width and name not in self._hidden_cols
         ]
 
-    def _rebuild_columns(self, width: int, jobs: list[Job]) -> None:
+    def _rebuild_columns(self, width: int, jobs: list[Job], *, force: bool = False) -> None:
         visible = self._visible_cols_filtered(width)
+        visible_names = [n for n, _ in visible]
+        if (not force
+                and width == self._rebuild_cache_width
+                and visible_names == self._rebuild_cache_names):
+            return
         new_cols: list[tuple[str, int]] = []
         for col_name, min_w in visible:
             if jobs:
@@ -276,6 +287,8 @@ class JobsView(BaseDataTableView[Job]):
             col_width = max(min_w, min(longest + 1, max_w))
             new_cols.append((col_name, col_width))
 
+        self._rebuild_cache_width = width
+        self._rebuild_cache_names = visible_names
         if new_cols == self._current_cols:
             return
         self._current_cols = new_cols
@@ -298,12 +311,7 @@ class JobsView(BaseDataTableView[Job]):
             return
         saved_row, scroll_y, anchor = state
         table = self.query_one(CyclicDataTable)
-        row = None
-        if anchor:
-            for i, job in enumerate(jobs):
-                if job.job_id == anchor:
-                    row = i
-                    break
+        row = self._last_jobs_index.get(anchor) if anchor else None
         if row is None:
             row = min(saved_row, len(jobs) - 1)
         table.move_cursor(row=row)
@@ -364,7 +372,7 @@ class JobsView(BaseDataTableView[Job]):
     def _reload_column_visibility(self) -> None:
         cfg = config.load()
         self._hidden_cols = set(cfg.get("columns", {}).get("jobs_hidden", []))
-        self._rebuild_columns(self.size.width, self._last_jobs)
+        self._rebuild_columns(self.size.width, self._last_jobs, force=True)
         self._render_rows(self._last_jobs)
 
     def action_watch_job(self) -> None:
@@ -607,6 +615,7 @@ class JobsView(BaseDataTableView[Job]):
         else:
             key_fn = _SORT_KEYS[self._sort_col]
             self._last_jobs = sorted(filtered, key=key_fn, reverse=self._sort_reversed)
+        self._last_jobs_index = {j.job_id: i for i, j in enumerate(self._last_jobs)}
 
         self._rebuild_columns(self.size.width, self._last_jobs)
         self._render_rows(self._last_jobs)

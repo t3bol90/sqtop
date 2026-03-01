@@ -93,9 +93,10 @@ class NodesView(BaseDataTableView[Node]):
         Binding("m", "sort_mem", show=False),
     ]
 
-    def __init__(self, interval: float = 2.0) -> None:
-        super().__init__(interval=interval)
+    def __init__(self, interval: float = 2.0, start_offset: float = 0.0) -> None:
+        super().__init__(interval=interval, start_offset=start_offset)
         self._last_nodes: list[Node] = []
+        self._last_nodes_index: dict[str, int] = {}
         self._current_cols: list[tuple[str, int]] = []
         cfg_all = config.load()
         view_state = cfg_all.get("view_state", {})
@@ -113,7 +114,10 @@ class NodesView(BaseDataTableView[Node]):
     def on_mount(self) -> None:
         self._rebuild_columns(self.size.width)
         self.refresh_data()
-        self._timer = self.set_interval(self._interval, self.refresh_data)
+        if self._start_offset > 0:
+            self.set_timer(self._start_offset, self._begin_interval)
+        else:
+            self._begin_interval()
 
     def _fetch_data(self) -> list[Node]:
         return fetch_nodes()
@@ -164,12 +168,7 @@ class NodesView(BaseDataTableView[Node]):
             return
         saved_row, scroll_y, anchor = state
         table = self.query_one(CyclicDataTable)
-        row = None
-        if anchor:
-            for i, node in enumerate(rows):
-                if node.name == anchor:
-                    row = i
-                    break
+        row = self._last_nodes_index.get(anchor) if anchor else None
         if row is None:
             row = min(saved_row, len(rows) - 1)
         table.move_cursor(row=row)
@@ -203,7 +202,9 @@ class NodesView(BaseDataTableView[Node]):
         state = self._capture_table_state()
         self._last_nodes = nodes
         self._render_rows(nodes)
-        self._restore_table_state(state, self._sorted_visible(nodes))
+        sorted_nodes = self._sorted_visible(nodes)
+        self._last_nodes_index = {n.name: i for i, n in enumerate(sorted_nodes)}
+        self._restore_table_state(state, sorted_nodes)
         now = datetime.now().strftime("%H:%M:%S")
         visible = [n for n in nodes if n.name]
         idle  = sum(1 for n in visible if "idle"  in n.state.lower())

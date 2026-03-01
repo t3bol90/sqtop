@@ -15,9 +15,10 @@ class BaseDataTableView(Static, Generic[T]):
     Subclasses must implement _fetch_data(), _get_anchor_key(), and _update_table().
     """
 
-    def __init__(self, interval: float = 2.0) -> None:
+    def __init__(self, interval: float = 2.0, start_offset: float = 0.0) -> None:
         super().__init__()
         self._interval = interval
+        self._start_offset = start_offset
         self._timer = None
         self._fetching = False
         self._sort_col: str | None = None
@@ -38,6 +39,10 @@ class BaseDataTableView(Static, Generic[T]):
         raise NotImplementedError
 
     # ── Provided by base class ────────────────────────────────────────────────
+
+    def _begin_interval(self) -> None:
+        """Start the periodic refresh timer."""
+        self._timer = self.set_interval(self._interval, self.refresh_data)
 
     def set_interval_rate(self, interval: float) -> None:
         """Change the auto-refresh interval."""

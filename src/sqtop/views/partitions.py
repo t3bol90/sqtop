@@ -48,8 +48,8 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
         Binding("n", "sort_nodes", show=False),
     ]
 
-    def __init__(self, interval: float = 5.0) -> None:
-        super().__init__(interval=interval)
+    def __init__(self, interval: float = 5.0, start_offset: float = 0.0) -> None:
+        super().__init__(interval=interval, start_offset=start_offset)
         self._last_summaries: list[ClusterSummary] = []
         cfg_all = config.load()
         view_state = cfg_all.get("view_state", {})
@@ -81,7 +81,10 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
     def on_mount(self) -> None:
         self._rebuild_columns()
         self.refresh_data()
-        self._timer = self.set_interval(self._interval, self.refresh_data)
+        if self._start_offset > 0:
+            self.set_timer(self._start_offset, self._begin_interval)
+        else:
+            self._begin_interval()
 
     def _fetch_data(self) -> list[ClusterSummary]:
         return fetch_cluster_summary()
