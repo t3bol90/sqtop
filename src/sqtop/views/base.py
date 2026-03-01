@@ -1,6 +1,7 @@
 """Base class for live data-table views."""
 from __future__ import annotations
 
+import threading
 from typing import Generic, TypeVar
 
 from textual import work
@@ -20,7 +21,7 @@ class BaseDataTableView(Static, Generic[T]):
         self._interval = interval
         self._start_offset = start_offset
         self._timer = None
-        self._fetching = False
+        self._fetch_lock = threading.Lock()
         self._paused: bool = False
         self._sort_col: str | None = None
         self._sort_reversed: bool = False
@@ -79,14 +80,13 @@ class BaseDataTableView(Static, Generic[T]):
         """Fetch data in a background thread; update table on main thread."""
         if self._paused:
             return
-        if self._fetching:
+        if not self._fetch_lock.acquire(blocking=False):
             return
-        self._fetching = True
         try:
             data = self._fetch_data()
             self.app.call_from_thread(self._update_table, data)
         finally:
-            self._fetching = False
+            self._fetch_lock.release()
 
     def _set_sort(self, col: str) -> None:
         """Toggle sort column; reverse direction if same column selected again."""

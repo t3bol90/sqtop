@@ -1,6 +1,8 @@
 """Log viewer modal — auto-tailing log file display."""
 from __future__ import annotations
 
+import threading
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import ModalScreen
@@ -38,7 +40,7 @@ class LogViewerScreen(ModalScreen[None]):
         self._log_type = log_type  # "stdout" or "stderr"
         self._follow = True
         self._timer = None
-        self._fetching = False
+        self._fetch_lock = threading.Lock()
         self._last_content: str = ""
 
     def compose(self) -> ComposeResult:
@@ -63,14 +65,13 @@ class LogViewerScreen(ModalScreen[None]):
 
     @work(thread=True)
     def fetch_log(self) -> None:
-        if self._fetching:
+        if not self._fetch_lock.acquire(blocking=False):
             return
-        self._fetching = True
         try:
             content = tail_log_file(self._log_path)
             self.app.call_from_thread(self._render_log, content)
         finally:
-            self._fetching = False
+            self._fetch_lock.release()
 
     def _render_log(self, content: str) -> None:
         if not self._follow:
