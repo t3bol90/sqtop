@@ -31,6 +31,7 @@ from .bulk_actions import BulkActionScreen
 from .confirm import ConfirmScreen
 from .job_actions import JobActionScreen
 from .job_detail import JobDetailScreen
+from .job_info import JobInfoScreen
 from .log_viewer import LogViewerScreen
 from .widgets import CyclicDataTable
 
@@ -245,6 +246,7 @@ class JobsView(BaseDataTableView[Job]):
         Binding("w", "watch_job", "Watch", show=True),
         Binding("D", "view_dependencies", "Deps", show=False),
         Binding("f", "cycle_state_filter", "Filter state", show=False),
+        Binding("i", "job_info", "Info", show=False),
     ]
 
     def __init__(self, interval: float = 2.0, start_offset: float = 0.0) -> None:
@@ -458,6 +460,10 @@ class JobsView(BaseDataTableView[Job]):
         if job := self._job_for_cursor():
             from .dependency import JobDependencyScreen
             self.app.push_screen(JobDependencyScreen(job))
+
+    def action_job_info(self) -> None:
+        if job := self._job_for_cursor():
+            self.app.push_screen(JobInfoScreen(job))
 
     def _reload_column_visibility(self) -> None:
         cfg = config.load()
