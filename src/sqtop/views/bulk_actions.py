@@ -13,6 +13,7 @@ class BulkActionScreen(ModalButtonNavMixin, ModalScreen[str | None]):
     """Choose a bulk action for selected jobs."""
 
     BINDINGS = [
+        *ModalButtonNavMixin.BINDINGS,
         Binding("escape", "dismiss(None)", show=False),
     ]
 

@@ -14,6 +14,7 @@ class JobActionScreen(ModalButtonNavMixin, ModalScreen[str | None]):
     """Show job summary + actions."""
 
     BINDINGS = [
+        *ModalButtonNavMixin.BINDINGS,
         Binding("escape", "dismiss(None)", show=False),
     ]
 
