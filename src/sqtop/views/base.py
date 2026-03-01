@@ -21,6 +21,7 @@ class BaseDataTableView(Static, Generic[T]):
         self._start_offset = start_offset
         self._timer = None
         self._fetching = False
+        self._paused: bool = False
         self._sort_col: str | None = None
         self._sort_reversed: bool = False
 
@@ -64,9 +65,20 @@ class BaseDataTableView(Static, Generic[T]):
         else:
             self._begin_interval()
 
+    def pause(self) -> None:
+        """Pause live data refresh."""
+        self._paused = True
+
+    def resume(self) -> None:
+        """Resume live data refresh and fetch immediately."""
+        self._paused = False
+        self.refresh_data()
+
     @work(thread=True)
     def refresh_data(self) -> None:
         """Fetch data in a background thread; update table on main thread."""
+        if self._paused:
+            return
         if self._fetching:
             return
         self._fetching = True

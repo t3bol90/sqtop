@@ -9,6 +9,7 @@ from textual.binding import Binding
 from textual.screen import Screen
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 
+from .views.base import BaseDataTableView
 from .views.jobs import JobsView, COLUMNS as JOBS_COLUMNS
 from .views.nodes import NodesView, COLUMNS as NODES_COLUMNS
 from .views.partitions import PartitionsView, COLUMNS as PARTITIONS_COLUMNS
@@ -29,7 +30,7 @@ class SqtopApp(App):
         Binding("2", "switch_tab('nodes')", "Nodes"),
         Binding("3", "switch_tab('partitions')", "Partitions"),
         Binding("r", "refresh", "Refresh"),
-        Binding("P", "save_screenshot", "Screenshot", show=False),
+        Binding("P", "toggle_pause", "Pause", show=False),
         Binding("S", "command_palette", "Commands", show=False),
         Binding("ctrl+p", "command_palette", "Commands", show=False),
         Binding("C", "column_toggle", "Columns", show=False),
@@ -43,6 +44,7 @@ class SqtopApp(App):
         cfg = config.load()
         self.interval = cfg["interval"]
         self._saved_theme = cfg["theme"]
+        self._paused: bool = False
         self.expert_mode = bool(cfg.get("ui", {}).get("expert_mode", False))
         self.confirm_cancel_single = bool(cfg.get("safety", {}).get("confirm_cancel_single", True))
         self.confirm_bulk_actions = bool(cfg.get("safety", {}).get("confirm_bulk_actions", True))
@@ -90,6 +92,15 @@ class SqtopApp(App):
     def action_refresh(self) -> None:
         for view in self.query("JobsView, NodesView, PartitionsView"):
             view.refresh_data()  # type: ignore[union-attr]
+
+    def action_toggle_pause(self) -> None:
+        self._paused = not self._paused
+        for view in self.query(BaseDataTableView):
+            if self._paused:
+                view.pause()
+            else:
+                view.resume()
+        self.notify("Paused" if self._paused else "Resumed", title="Refresh")
 
     def action_column_toggle(self) -> None:
         active = self.query_one(TabbedContent).active
