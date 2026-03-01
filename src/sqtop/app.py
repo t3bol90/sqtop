@@ -13,6 +13,7 @@ from .views.base import BaseDataTableView
 from .views.jobs import JobsView, COLUMNS as JOBS_COLUMNS
 from .views.nodes import NodesView, COLUMNS as NODES_COLUMNS
 from .views.partitions import PartitionsView, COLUMNS as PARTITIONS_COLUMNS
+from .views.history import HistoryView
 from .views.column_toggle import ColumnToggleScreen
 from .views.keybindings_help import KeybindingHelpScreen
 from . import config, slurm
@@ -29,6 +30,7 @@ class SqtopApp(App):
         Binding("1", "switch_tab('jobs')", "Jobs"),
         Binding("2", "switch_tab('nodes')", "Nodes"),
         Binding("3", "switch_tab('partitions')", "Partitions"),
+        Binding("4", "switch_tab('history')", "History"),
         Binding("r", "refresh", "Refresh"),
         Binding("P", "toggle_pause", "Pause", show=False),
         Binding("S", "command_palette", "Commands", show=False),
@@ -69,6 +71,8 @@ class SqtopApp(App):
                 yield NodesView(self.interval, start_offset=0.7)
             with TabPane("Partitions [3]", id="partitions"):
                 yield PartitionsView(self.interval, start_offset=1.4)
+            with TabPane("History [4]", id="history"):
+                yield HistoryView(interval=30.0, start_offset=2.1)
         yield Footer()
 
     def action_switch_tab(self, tab_id: str) -> None:
@@ -80,6 +84,7 @@ class SqtopApp(App):
             "jobs": "#jobs-table",
             "nodes": "#nodes-table",
             "partitions": "#partitions-table",
+            "history": "#history-table",
         }.get(tab_id)
         if not table_id:
             return

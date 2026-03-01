@@ -409,6 +409,56 @@ def fetch_job_dependencies(job_id: str) -> list[JobDependency]:
 
 
 # ---------------------------------------------------------------------------
+# Completed jobs (sacct)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class SacctJob:
+    job_id: str
+    name: str
+    user: str
+    state: str
+    num_cpus: str
+    elapsed: str
+    exit_code: str
+    partition: str
+
+
+def fetch_sacct_jobs(hours: int = 24) -> list[SacctJob]:
+    """Fetch completed jobs from sacct for the last N hours."""
+    cmd = (
+        f"sacct --noheader --parsable2 -S now-{hours}hours"
+        " -o JobID,JobName,User,State,AllocCPUS,Elapsed,ExitCode,Partition"
+    )
+    try:
+        out, ok, _ = _run_result(cmd)
+    except FileNotFoundError:
+        return []
+    if not ok:
+        return []
+    jobs = []
+    for line in out.strip().splitlines():
+        parts = line.split("|")
+        if len(parts) < 8:
+            continue
+        job_id = parts[0]
+        # Skip step lines: job IDs containing '.' are steps (e.g. 12345.batch)
+        if "." in job_id:
+            continue
+        jobs.append(SacctJob(
+            job_id=job_id,
+            name=parts[1],
+            user=parts[2],
+            state=parts[3],
+            num_cpus=parts[4],
+            elapsed=parts[5],
+            exit_code=parts[6],
+            partition=parts[7],
+        ))
+    return jobs
+
+
+# ---------------------------------------------------------------------------
 # SSH remote support
 # ---------------------------------------------------------------------------
 
