@@ -1,0 +1,67 @@
+"""Base class for live data-table views."""
+from __future__ import annotations
+
+from typing import Generic, TypeVar
+
+from textual import work
+from textual.widgets import Static
+
+T = TypeVar("T")
+
+
+class BaseDataTableView(Static, Generic[T]):
+    """Shared refresh loop, sort toggle, and cursor/scroll preservation for data-table views.
+
+    Subclasses must implement _fetch_data(), _get_anchor_key(), and _update_table().
+    """
+
+    def __init__(self, interval: float = 2.0) -> None:
+        super().__init__()
+        self._interval = interval
+        self._timer = None
+        self._fetching = False
+        self._sort_col: str | None = None
+        self._sort_reversed: bool = False
+
+    # ── Subclasses must implement ─────────────────────────────────────────────
+
+    def _fetch_data(self) -> list[T]:
+        """Fetch data from Slurm. Called in a worker thread."""
+        raise NotImplementedError
+
+    def _get_anchor_key(self, item: T) -> str:
+        """Return a unique stable key for cursor tracking (e.g. job_id, node name)."""
+        raise NotImplementedError
+
+    def _update_table(self, data: list[T]) -> None:
+        """Update the table with new data. Called on the main thread."""
+        raise NotImplementedError
+
+    # ── Provided by base class ────────────────────────────────────────────────
+
+    def set_interval_rate(self, interval: float) -> None:
+        """Change the auto-refresh interval."""
+        self._interval = interval
+        if self._timer:
+            self._timer.stop()
+        self._timer = self.set_interval(self._interval, self.refresh_data)
+
+    @work(thread=True)
+    def refresh_data(self) -> None:
+        """Fetch data in a background thread; update table on main thread."""
+        if self._fetching:
+            return
+        self._fetching = True
+        try:
+            data = self._fetch_data()
+            self.app.call_from_thread(self._update_table, data)
+        finally:
+            self._fetching = False
+
+    def _set_sort(self, col: str) -> None:
+        """Toggle sort column; reverse direction if same column selected again."""
+        if self._sort_col == col:
+            self._sort_reversed = not self._sort_reversed
+        else:
+            self._sort_col = col
+            self._sort_reversed = False

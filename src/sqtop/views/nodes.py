@@ -6,11 +6,11 @@ from datetime import datetime
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.widgets import DataTable, Label, Static
+from textual.widgets import DataTable, Label
 
+from .base import BaseDataTableView
 from .widgets import CyclicDataTable
 from .node_detail import NodeDetailScreen
-from textual import work
 
 from ..slurm import Node, fetch_nodes
 
@@ -82,7 +82,7 @@ def _free_mem(n: Node) -> int:
         return 0
 
 
-class NodesView(Static):
+class NodesView(BaseDataTableView[Node]):
     """Displays a live sinfo-style node table."""
 
     BINDINGS = [
@@ -93,14 +93,9 @@ class NodesView(Static):
     ]
 
     def __init__(self, interval: float = 2.0) -> None:
-        super().__init__()
-        self._interval = interval
+        super().__init__(interval=interval)
         self._last_nodes: list[Node] = []
         self._current_cols: list[tuple[str, int]] = []
-        self._fetching = False
-        self._timer = None
-        self._sort_col: str | None = None
-        self._sort_reversed: bool = False
 
     def compose(self) -> ComposeResult:
         yield Label("", id="nodes-header")
@@ -111,11 +106,11 @@ class NodesView(Static):
         self.refresh_data()
         self._timer = self.set_interval(self._interval, self.refresh_data)
 
-    def set_interval_rate(self, interval: float) -> None:
-        self._interval = interval
-        if self._timer:
-            self._timer.stop()
-        self._timer = self.set_interval(self._interval, self.refresh_data)
+    def _fetch_data(self) -> list[Node]:
+        return fetch_nodes()
+
+    def _get_anchor_key(self, item: Node) -> str:
+        return item.name
 
     def on_resize(self, event) -> None:
         new_cols = _visible_cols(event.size.width)
@@ -158,23 +153,8 @@ class NodesView(Static):
         table.move_cursor(row=row)
         table.scroll_to(y=scroll_y, animate=False)
 
-    @work(thread=True)
-    def refresh_data(self) -> None:
-        if self._fetching:
-            return
-        self._fetching = True
-        try:
-            nodes = fetch_nodes()
-            self.app.call_from_thread(self._update_table, nodes)
-        finally:
-            self._fetching = False
-
     def _set_sort(self, col: str) -> None:
-        if self._sort_col == col:
-            self._sort_reversed = not self._sort_reversed
-        else:
-            self._sort_col = col
-            self._sort_reversed = False
+        super()._set_sort(col)
         self._render_rows(self._last_nodes)
 
     def action_sort_state(self) -> None:

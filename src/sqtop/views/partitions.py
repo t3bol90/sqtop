@@ -6,9 +6,9 @@ from datetime import datetime
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.widgets import DataTable, Label, Static
-from textual import work
+from textual.widgets import DataTable, Label
 
+from .base import BaseDataTableView
 from ..slurm import ClusterSummary, fetch_cluster_summary
 from .widgets import CyclicDataTable
 
@@ -39,7 +39,7 @@ COLUMNS: list[tuple[str, int]] = [
 ]
 
 
-class PartitionsView(Static):
+class PartitionsView(BaseDataTableView[ClusterSummary]):
     """Displays a live sinfo-style partition summary table."""
 
     BINDINGS = [
@@ -48,13 +48,8 @@ class PartitionsView(Static):
     ]
 
     def __init__(self, interval: float = 5.0) -> None:
-        super().__init__()
-        self._interval = interval
+        super().__init__(interval=interval)
         self._last_summaries: list[ClusterSummary] = []
-        self._fetching = False
-        self._timer = None
-        self._sort_col: str | None = None
-        self._sort_reversed: bool = False
 
     def compose(self) -> ComposeResult:
         yield Label("", id="partitions-header")
@@ -67,29 +62,14 @@ class PartitionsView(Static):
         self.refresh_data()
         self._timer = self.set_interval(self._interval, self.refresh_data)
 
-    def set_interval_rate(self, interval: float) -> None:
-        self._interval = interval
-        if self._timer:
-            self._timer.stop()
-        self._timer = self.set_interval(self._interval, self.refresh_data)
+    def _fetch_data(self) -> list[ClusterSummary]:
+        return fetch_cluster_summary()
 
-    @work(thread=True)
-    def refresh_data(self) -> None:
-        if self._fetching:
-            return
-        self._fetching = True
-        try:
-            summaries = fetch_cluster_summary()
-            self.app.call_from_thread(self._update_table, summaries)
-        finally:
-            self._fetching = False
+    def _get_anchor_key(self, item: ClusterSummary) -> str:
+        return item.partition
 
     def _set_sort(self, col: str) -> None:
-        if self._sort_col == col:
-            self._sort_reversed = not self._sort_reversed
-        else:
-            self._sort_col = col
-            self._sort_reversed = False
+        super()._set_sort(col)
         self._render_rows(self._last_summaries)
 
     def action_sort_partition(self) -> None:

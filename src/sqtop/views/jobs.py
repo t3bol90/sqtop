@@ -10,8 +10,7 @@ from datetime import datetime
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.widgets import DataTable, Input, Label, Static
-from textual import work
+from textual.widgets import DataTable, Input, Label
 
 from ..slurm import (
     ActionResult,
@@ -26,6 +25,7 @@ from ..slurm import (
     run_attach_command,
 )
 from .. import config
+from .base import BaseDataTableView
 from .attach_prompt import AttachNodePromptScreen
 from .bulk_actions import BulkActionScreen
 from .confirm import ConfirmScreen
@@ -143,7 +143,7 @@ def _coerce_bool(value: object, default: bool) -> bool:
     return default
 
 
-class JobsView(Static):
+class JobsView(BaseDataTableView[Job]):
     """Displays a live squeue-style table."""
 
     BINDINGS = [
@@ -165,17 +165,12 @@ class JobsView(Static):
     ]
 
     def __init__(self, interval: float = 2.0) -> None:
-        super().__init__()
-        self._interval = interval
+        super().__init__(interval=interval)
         self._last_jobs_raw: list[Job] = []
         self._last_jobs: list[Job] = []
         self._current_cols: list[tuple[str, int]] = []
-        self._fetching = False
-        self._timer = None
         self._filter_mine: bool = False
         self._search_query: str = ""
-        self._sort_col: str | None = None   # None = default state-priority sort
-        self._sort_reversed: bool = False
         self._watched_states: dict[str, str] = {}  # job_id → last known state
         cfg_all = config.load()
         cfg = cfg_all.get("jobs", {})
@@ -211,11 +206,11 @@ class JobsView(Static):
         self.refresh_data()
         self._timer = self.set_interval(self._interval, self.refresh_data)
 
-    def set_interval_rate(self, interval: float) -> None:
-        self._interval = interval
-        if self._timer:
-            self._timer.stop()
-        self._timer = self.set_interval(self._interval, self.refresh_data)
+    def _fetch_data(self) -> list[Job]:
+        return fetch_jobs()
+
+    def _get_anchor_key(self, item: Job) -> str:
+        return item.job_id
 
     def on_resize(self, event) -> None:
         state = self._capture_table_state()
@@ -295,17 +290,6 @@ class JobsView(Static):
         table.move_cursor(row=row)
         table.scroll_to(y=scroll_y, animate=False)
 
-    @work(thread=True)
-    def refresh_data(self) -> None:
-        if self._fetching:
-            return
-        self._fetching = True
-        try:
-            jobs = fetch_jobs()
-            self.app.call_from_thread(self._update_table, jobs)
-        finally:
-            self._fetching = False
-
     # ── Actions ──────────────────────────────────────────────────────────────
 
     def action_toggle_mine(self) -> None:
@@ -318,11 +302,7 @@ class JobsView(Static):
         bar.focus()
 
     def _set_sort(self, col: str) -> None:
-        if self._sort_col == col:
-            self._sort_reversed = not self._sort_reversed
-        else:
-            self._sort_col = col
-            self._sort_reversed = False
+        super()._set_sort(col)
         self._update_table(self._last_jobs_raw)
 
     def action_sort_state(self) -> None:
