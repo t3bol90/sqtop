@@ -87,6 +87,9 @@ class JobDetailScreen(ModalScreen[None]):
                 yield DetailView(id="job-detail-view")
 
     def on_mount(self) -> None:
+        self.call_after_refresh(self._show_content)
+
+    def _show_content(self) -> None:
         self.query_one("#job-detail-view", DetailView).show_job(self._data)
         state = self._data.get("JobState", "").upper()
         if state in _TERMINAL_STATES:
