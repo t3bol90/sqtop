@@ -38,6 +38,8 @@ class LogViewerScreen(ModalScreen[None]):
         self._log_type = log_type  # "stdout" or "stderr"
         self._follow = True
         self._timer = None
+        self._fetching = False
+        self._last_content: str = ""
 
     def compose(self) -> ComposeResult:
         with Static(id="log-dialog"):
@@ -61,12 +63,21 @@ class LogViewerScreen(ModalScreen[None]):
 
     @work(thread=True)
     def fetch_log(self) -> None:
-        content = tail_log_file(self._log_path)
-        self.app.call_from_thread(self._render_log, content)
+        if self._fetching:
+            return
+        self._fetching = True
+        try:
+            content = tail_log_file(self._log_path)
+            self.app.call_from_thread(self._render_log, content)
+        finally:
+            self._fetching = False
 
     def _render_log(self, content: str) -> None:
         if not self._follow:
             return
+        if content == self._last_content:
+            return
+        self._last_content = content
         log = self.query_one("#log-output", RichLog)
         log.clear()
         log.write(content)
