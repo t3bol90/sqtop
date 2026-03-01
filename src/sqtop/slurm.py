@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import subprocess
 import shlex
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from collections import deque
 from time import monotonic
@@ -171,8 +172,11 @@ def _fetch_gpus_alloc() -> dict[str, int]:
 def fetch_nodes() -> list[Node]:
     """Return node info from sinfo."""
     fmt = "%n|%T|%P|%c|%C|%m|%e|%O|%G"
-    out = _run(f"sinfo --noheader -o '{fmt}'")
-    gpus_alloc = _fetch_gpus_alloc()
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        f_sinfo = pool.submit(_run, f"sinfo --noheader -o '{fmt}'")
+        f_gpus  = pool.submit(_fetch_gpus_alloc)
+    out = f_sinfo.result()
+    gpus_alloc = f_gpus.result()
     nodes = []
     for line in out.strip().splitlines():
         parts = line.split("|")
