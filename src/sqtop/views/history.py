@@ -13,7 +13,7 @@ from textual.widgets import Button, Label, Static
 from .base import BaseDataTableView
 from .mixins import ModalButtonNavMixin
 from ..slurm import SacctJob, fetch_log_paths, fetch_sacct_jobs
-from .log_viewer import LogViewerScreen
+from .log_viewer import LogViewerScreen, LOG_STDOUT, LOG_STDERR
 from .widgets import CyclicDataTable
 
 STATE_COLORS: dict[str, str] = {
@@ -70,9 +70,9 @@ class HistoryActionScreen(ModalButtonNavMixin, ModalScreen[str | None]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-stdout":
-            self.dismiss("stdout")
+            self.dismiss(LOG_STDOUT)
         elif event.button.id == "btn-stderr":
-            self.dismiss("stderr")
+            self.dismiss(LOG_STDERR)
         else:
             self.dismiss(None)
 
@@ -129,9 +129,9 @@ class HistoryView(BaseDataTableView[SacctJob]):
             return
 
         def handle_action(action: str | None) -> None:
-            if action in ("stdout", "stderr"):
+            if action in (LOG_STDOUT, LOG_STDERR):
                 stdout_path, stderr_path = fetch_log_paths(job.job_id)
-                log_path = stdout_path if action == "stdout" else stderr_path
+                log_path = stdout_path if action == LOG_STDOUT else stderr_path
                 if not log_path:
                     self.app.notify("No log path found for this job", severity="warning")
                     return

@@ -34,7 +34,7 @@ from .job_actions import JobActionScreen
 from .job_detail import JobDetailScreen
 from .job_info import JobInfoScreen
 from .array_tasks import ArrayTaskScreen
-from .log_viewer import LogViewerScreen
+from .log_viewer import LogViewerScreen, LOG_STDOUT, LOG_STDERR
 from .widgets import CyclicDataTable
 
 _STATE_ORDER = {"COMPLETING": 0, "RUNNING": 1, "PENDING": 2}
@@ -486,7 +486,7 @@ class JobsView(BaseDataTableView[Job]):
             )
             return
         self.app.call_from_thread(
-            self.app.push_screen, LogViewerScreen(job.job_id, stdout_path, "stdout")
+            self.app.push_screen, LogViewerScreen(job.job_id, stdout_path, LOG_STDOUT)
         )
 
     @work(thread=True)
@@ -909,7 +909,7 @@ class JobsView(BaseDataTableView[Job]):
                     execute_cancel()
             else:
                 stdout_path, stderr_path = fetch_log_paths(job.job_id)
-                log_path = stdout_path if action == "stdout" else stderr_path
+                log_path = stdout_path if action == LOG_STDOUT else stderr_path
                 self.app.push_screen(LogViewerScreen(job.job_id, log_path, action))
 
         self.app.push_screen(JobActionScreen(job), handle_action)

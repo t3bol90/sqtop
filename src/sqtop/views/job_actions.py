@@ -8,6 +8,7 @@ from textual.widgets import Button, Label, Static
 
 from ..slurm import Job
 from .mixins import ModalButtonNavMixin
+from .log_viewer import LOG_STDOUT, LOG_STDERR
 
 
 class JobActionScreen(ModalButtonNavMixin, ModalScreen[str | None]):
@@ -66,9 +67,9 @@ class JobActionScreen(ModalButtonNavMixin, ModalScreen[str | None]):
         elif event.button.id == "btn-attach-custom":
             self.dismiss("attach_custom")
         elif event.button.id == "btn-stdout":
-            self.dismiss("stdout")
+            self.dismiss(LOG_STDOUT)
         elif event.button.id == "btn-stderr":
-            self.dismiss("stderr")
+            self.dismiss(LOG_STDERR)
         elif event.button.id == "btn-detail":
             self.dismiss("detail")
         elif event.button.id == "btn-dependencies":

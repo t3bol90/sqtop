@@ -11,6 +11,9 @@ from textual import work
 
 from ..slurm import tail_log_file
 
+LOG_STDOUT = "stdout"
+LOG_STDERR = "stderr"
+
 
 class LogViewerScreen(ModalScreen[None]):
     """Full-screen log viewer with 2s auto-refresh."""
@@ -37,7 +40,7 @@ class LogViewerScreen(ModalScreen[None]):
         super().__init__()
         self._job_id = job_id
         self._log_path = log_path
-        self._log_type = log_type  # "stdout" or "stderr"
+        self._log_type = log_type  # LOG_STDOUT or LOG_STDERR
         self._follow = True
         self._timer = None
         self._fetch_lock = threading.Lock()
