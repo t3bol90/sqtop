@@ -7,15 +7,14 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Static
 
 from ..slurm import Job
+from .mixins import ModalButtonNavMixin
 
 
-class JobActionScreen(ModalScreen[str | None]):
+class JobActionScreen(ModalButtonNavMixin, ModalScreen[str | None]):
     """Show job summary + actions."""
 
     BINDINGS = [
         Binding("escape", "dismiss(None)", show=False),
-        Binding("up", "focus_previous", show=False),
-        Binding("down", "focus_next", show=False),
     ]
 
     CSS = """
@@ -58,24 +57,6 @@ class JobActionScreen(ModalScreen[str | None]):
             yield Button("Show details", id="btn-detail", variant="default")
             yield Button("Cancel job [dim]scancel[/]", id="btn-cancel", variant="error")
             yield Button("Close  [dim]esc[/]", id="btn-close", variant="default")
-
-    def _focused_button_index(self) -> int:
-        buttons = list(self.query(Button))
-        focused = self.focused
-        try:
-            return buttons.index(focused)
-        except ValueError:
-            return 0
-
-    def action_focus_next(self) -> None:
-        buttons = list(self.query(Button))
-        if buttons:
-            buttons[(self._focused_button_index() + 1) % len(buttons)].focus()
-
-    def action_focus_previous(self) -> None:
-        buttons = list(self.query(Button))
-        if buttons:
-            buttons[(self._focused_button_index() - 1) % len(buttons)].focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-attach-first":

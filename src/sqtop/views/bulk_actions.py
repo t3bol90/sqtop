@@ -6,14 +6,14 @@ from textual.binding import Binding
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Static
 
+from .mixins import ModalButtonNavMixin
 
-class BulkActionScreen(ModalScreen[str | None]):
+
+class BulkActionScreen(ModalButtonNavMixin, ModalScreen[str | None]):
     """Choose a bulk action for selected jobs."""
 
     BINDINGS = [
         Binding("escape", "dismiss(None)", show=False),
-        Binding("up", "focus_previous", show=False),
-        Binding("down", "focus_next", show=False),
     ]
 
     CSS = """
@@ -41,24 +41,6 @@ class BulkActionScreen(ModalScreen[str | None]):
             yield Button("Release selected", id="btn-release", variant="default")
             yield Button("Requeue selected", id="btn-requeue", variant="primary")
             yield Button("Close  [dim]esc[/]", id="btn-close", variant="default")
-
-    def _focused_button_index(self) -> int:
-        buttons = list(self.query(Button))
-        focused = self.focused
-        try:
-            return buttons.index(focused)
-        except ValueError:
-            return 0
-
-    def action_focus_next(self) -> None:
-        buttons = list(self.query(Button))
-        if buttons:
-            buttons[(self._focused_button_index() + 1) % len(buttons)].focus()
-
-    def action_focus_previous(self) -> None:
-        buttons = list(self.query(Button))
-        if buttons:
-            buttons[(self._focused_button_index() - 1) % len(buttons)].focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         mapping = {

@@ -51,7 +51,7 @@ def _run_result(cmd: str) -> tuple[str, bool, str]:
             stderr=(result.stderr or "").strip(),
         )
         return result.stdout, ok, (result.stderr or "").strip()
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         _record_command(
             cmd,
             ok=False,
@@ -179,7 +179,7 @@ def fetch_nodes() -> list[Node]:
             name=name,
             state=parts[1],
             partition=parts[2],
-            cpus_total=cpu_parts[3] if len(cpu_parts) == 4 else parts[3],
+            cpus_total=cpu_parts[3] if len(cpu_parts) == 4 else "?",
             cpus_alloc=cpu_parts[0] if len(cpu_parts) == 4 else "?",
             memory_total=parts[5],
             memory_free=parts[6],

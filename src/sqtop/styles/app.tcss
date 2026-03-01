@@ -31,58 +31,21 @@ DataTable > .datatable--odd-row {
     background: $panel;
 }
 
-/* ── Jobs view ──────────────────────────────────────────── */
+/* ── View containers ────────────────────────────────────── */
 
-JobsView {
-    height: 1fr;
-    padding: 0;
-}
-
-#jobs-header {
-    background: $panel;
-    color: $text;
-    padding: 0 1;
-    text-style: bold;
-    height: 1;
-}
-
-/* ── Nodes view ─────────────────────────────────────────── */
-
-NodesView {
-    height: 1fr;
-    padding: 0;
-}
-
-#nodes-header {
-    background: $panel;
-    color: $text;
-    padding: 0 1;
-    text-style: bold;
-    height: 1;
-}
-
-/* ── Partitions view ────────────────────────────────────── */
-
-PartitionsView {
-    height: 1fr;
-    padding: 0;
-}
-
-#partitions-header {
-    background: $panel;
-    color: $text;
-    padding: 0 1;
-    text-style: bold;
-    height: 1;
-}
-
-/* ── Health view ───────────────────────────────────────── */
-
+JobsView,
+NodesView,
+PartitionsView,
 HealthView {
     height: 1fr;
     padding: 0;
 }
 
+/* ── View header bars ───────────────────────────────────── */
+
+#jobs-header,
+#nodes-header,
+#partitions-header,
 #health-header {
     background: $panel;
     color: $text;
