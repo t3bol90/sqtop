@@ -112,10 +112,12 @@ Attach behavior:
 | `1` | Jobs tab |
 | `2` | Nodes tab |
 | `3` | Partitions tab |
-| `Ctrl+P` | Textual command palette (default) |
+| `Ctrl+P` | Command palette |
+| `S` | Command palette |
 | `r` | Refresh all tabs |
 | `Shift+P` | Save screenshot to `~/.cache/sqtop/screenshots` |
-| `S` | Open settings |
+| `Shift+C` | Column visibility toggle for current tab |
+| `Ctrl+C` | Quit |
 | `q` | Quit |
 
 ### Jobs tab
@@ -136,7 +138,9 @@ Attach behavior:
 | `t` | Sort by time |
 | `c` | Sort by CPUs |
 | `y` | Copy selected job ID |
+| `Shift+Y` | Copy current row |
 | `w` | Toggle watch on selected job |
+| `Shift+D` | View dependency tree |
 
 ### Nodes tab
 
