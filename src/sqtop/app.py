@@ -45,6 +45,9 @@ class SqtopApp(App):
         self.confirm_cancel_single = bool(cfg.get("safety", {}).get("confirm_cancel_single", True))
         self.confirm_bulk_actions = bool(cfg.get("safety", {}).get("confirm_bulk_actions", True))
 
+    def watch_theme(self, theme: str) -> None:
+        config.save(theme, self.interval)
+
     def on_mount(self) -> None:
         self.theme = self._saved_theme
         if slurm._SSH_HOST:
