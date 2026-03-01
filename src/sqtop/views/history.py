@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
 
+from textual import work
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.widgets import Label
 
 from .base import BaseDataTableView
-from ..slurm import SacctJob, fetch_sacct_jobs
+from ..slurm import SacctJob, fetch_log_paths, fetch_sacct_jobs
+from .log_viewer import LogViewerScreen
 from .widgets import CyclicDataTable
 
 STATE_COLORS: dict[str, str] = {
@@ -34,12 +38,17 @@ _DEFAULT_HOURS = 24
 class HistoryView(BaseDataTableView[SacctJob]):
     """Displays recently completed/failed jobs via sacct."""
 
-    BINDINGS = []
+    BINDINGS = [
+        Binding("m", "toggle_mine", "Mine", show=True),
+        Binding("l", "view_log", "Log", show=False),
+    ]
 
     def __init__(self, interval: float = 30.0, start_offset: float = 0.0, hours: int = _DEFAULT_HOURS) -> None:
         super().__init__(interval=interval, start_offset=start_offset)
         self._hours = hours
+        self._last_jobs_raw: list[SacctJob] = []
         self._last_jobs: list[SacctJob] = []
+        self._filter_mine: bool = False
 
     def compose(self) -> ComposeResult:
         yield Label("", id="history-header")
@@ -61,20 +70,55 @@ class HistoryView(BaseDataTableView[SacctJob]):
     def _get_anchor_key(self, item: SacctJob) -> str:
         return item.job_id
 
+    def _job_for_cursor(self) -> SacctJob | None:
+        table = self.query_one(CyclicDataTable)
+        row = table.cursor_row
+        if 0 <= row < len(self._last_jobs):
+            return self._last_jobs[row]
+        return None
+
+    def action_toggle_mine(self) -> None:
+        self._filter_mine = not self._filter_mine
+        self._update_table(self._last_jobs_raw)
+
+    @work(thread=True)
+    def action_view_log(self) -> None:
+        job = self._job_for_cursor()
+        if not job:
+            return
+        stdout_path, _ = fetch_log_paths(job.job_id)
+        if not stdout_path:
+            self.app.call_from_thread(
+                self.app.notify, "No log path found for this job", severity="warning"
+            )
+            return
+        self.app.call_from_thread(
+            self.app.push_screen, LogViewerScreen(job.job_id, stdout_path, "stdout")
+        )
+
     def _update_table(self, data: list[SacctJob]) -> None:
-        self._last_jobs = data
+        self._last_jobs_raw = data
+
+        filtered = data
+        if self._filter_mine:
+            user = os.getenv("USER", "")
+            filtered = [j for j in filtered if j.user == user]
+        self._last_jobs = filtered
 
         now = datetime.now().strftime("%H:%M:%S")
-        failed = sum(1 for j in data if j.state.upper().startswith("FAILED"))
+        failed = sum(1 for j in filtered if j.state.upper().startswith("FAILED"))
+        tags = "[cyan]· mine[/]  " if self._filter_mine else ""
+        total_str = f"{len(filtered)}/{len(data)} jobs" if self._filter_mine else f"{len(data)} jobs"
         self.query_one("#history-header", Label).update(
             f"[b]sacct[/b]  [dim]last {self._hours}h[/]  "
+            f"{tags}"
             f"[red]{failed} failed[/]  "
-            f"[dim]{len(data)} jobs  updated {now}[/]"
+            f"[dim]{total_str}  updated {now}[/]"
         )
 
         state = self._capture_table_state()
-        self._render_rows(data)
-        self._restore_table_state(state, data)
+        self._render_rows(filtered)
+        self._restore_table_state(state, filtered)
 
     def _capture_table_state(self) -> tuple[int, float, str | None]:
         table = self.query_one(CyclicDataTable)
