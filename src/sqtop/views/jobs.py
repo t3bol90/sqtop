@@ -704,7 +704,10 @@ class JobsView(BaseDataTableView[Job]):
         def handle_action(action: str | None) -> None:
             if action is None:
                 return
-            if action == "attach_first":
+            if action == "dependencies":
+                from .dependency import JobDependencyScreen
+                self.app.push_screen(JobDependencyScreen(job))
+            elif action == "attach_first":
                 self._run_attach(job)
             elif action == "attach_custom":
                 default_node = resolve_first_node(job.nodelist)

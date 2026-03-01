@@ -28,7 +28,7 @@ class JobActionScreen(ModalButtonNavMixin, ModalScreen[str | None]):
     }
     #dialog .section-title { text-style: bold; color: $primary; margin-top: 1; }
     #btn-attach-first, #btn-attach-custom,
-    #btn-stdout, #btn-stderr, #btn-detail, #btn-cancel { width: 100%; margin-top: 1; }
+    #btn-stdout, #btn-stderr, #btn-detail, #btn-dependencies, #btn-cancel { width: 100%; margin-top: 1; }
     #btn-close { width: 100%; margin-top: 1; }
     """
 
@@ -56,6 +56,7 @@ class JobActionScreen(ModalButtonNavMixin, ModalScreen[str | None]):
             yield Button("View stdout log", id="btn-stdout", variant="primary")
             yield Button("View stderr log", id="btn-stderr", variant="default")
             yield Button("Show details", id="btn-detail", variant="default")
+            yield Button("View dependencies", id="btn-dependencies", variant="default")
             yield Button("Cancel job [dim]scancel[/]", id="btn-cancel", variant="error")
             yield Button("Close  [dim]esc[/]", id="btn-close", variant="default")
 
@@ -70,6 +71,8 @@ class JobActionScreen(ModalButtonNavMixin, ModalScreen[str | None]):
             self.dismiss("stderr")
         elif event.button.id == "btn-detail":
             self.dismiss("detail")
+        elif event.button.id == "btn-dependencies":
+            self.dismiss("dependencies")
         elif event.button.id == "btn-cancel":
             self.dismiss("cancel")
         else:

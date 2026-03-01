@@ -37,8 +37,15 @@ def _run_result(cmd: str) -> tuple[str, bool, str]:
     """Run command and return (stdout, ok, stderr)."""
     start = monotonic()
     try:
+        if _SSH_HOST:
+            ssh = ["ssh", "-q", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]
+            if _SSH_KEY:
+                ssh += ["-i", _SSH_KEY]
+            cmd_list = ssh + [_SSH_HOST, cmd]  # cmd as single string → remote shell parses it
+        else:
+            cmd_list = shlex.split(cmd)
         result = subprocess.run(
-            shlex.split(cmd),
+            cmd_list,
             capture_output=True,
             text=True,
             timeout=10,
@@ -363,3 +370,53 @@ def fetch_command_health(limit: int = 100) -> list[CommandStat]:
     if limit <= 0:
         return []
     return list(_COMMAND_HISTORY)[-limit:]
+
+
+# ---------------------------------------------------------------------------
+# Job dependencies
+# ---------------------------------------------------------------------------
+
+@dataclass
+class JobDependency:
+    dep_type: str   # "afterok", "afterany", "after", etc.
+    job_id: str
+    state: str      # fetched from squeue, or "COMPLETED" if not in queue
+
+
+def fetch_job_dependencies(job_id: str) -> list[JobDependency]:
+    """Parse Dependency= from scontrol show job. Non-recursive (immediate deps only)."""
+    dep_str = fetch_job_detail(job_id).get("Dependency", "")
+    if not dep_str or dep_str.lower() in {"none", "(null)"}:
+        return []
+    deps = []
+    for token in dep_str.split(","):
+        if ":" not in token:
+            continue  # handles "singleton"
+        dep_type, _, rest = token.partition(":")
+        for jid_raw in rest.split(":"):
+            jid = jid_raw.split("(")[0].strip()
+            if jid.isdigit():
+                deps.append(JobDependency(dep_type=dep_type.strip(), job_id=jid, state=""))
+    if not deps:
+        return []
+    # Batch fetch states with one squeue call
+    ids_csv = ",".join(d.job_id for d in deps)
+    out = _run(f"squeue --noheader -j {shlex.quote(ids_csv)} -o '%i|%T'")
+    state_map = {p[0]: p[1] for line in out.splitlines() if len((p := line.split("|"))) >= 2}
+    for d in deps:
+        d.state = state_map.get(d.job_id, "COMPLETED")  # absent = likely completed
+    return deps
+
+
+# ---------------------------------------------------------------------------
+# SSH remote support
+# ---------------------------------------------------------------------------
+
+_SSH_HOST: str | None = None
+_SSH_KEY: str | None = None
+
+
+def set_remote(host: str, key: str = "") -> None:
+    global _SSH_HOST, _SSH_KEY
+    _SSH_HOST = host.strip() or None
+    _SSH_KEY = key.strip() or None
