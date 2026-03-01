@@ -244,6 +244,7 @@ class JobsView(BaseDataTableView[Job]):
         Binding("Y", "yank_row", "Copy row", show=False),
         Binding("w", "watch_job", "Watch", show=True),
         Binding("D", "view_dependencies", "Deps", show=False),
+        Binding("f", "cycle_state_filter", "Filter state", show=False),
     ]
 
     def __init__(self, interval: float = 2.0, start_offset: float = 0.0) -> None:
@@ -255,6 +256,7 @@ class JobsView(BaseDataTableView[Job]):
         self._rebuild_cache_width: int = -1
         self._rebuild_cache_names: list[str] = []
         self._filter_mine: bool = False
+        self._filter_state: str = ""
         self._search_query: str = ""
         self._watched_states: dict[str, str] = {}  # job_id → last known state
         cfg_all = config.load()
@@ -403,6 +405,13 @@ class JobsView(BaseDataTableView[Job]):
     def action_toggle_mine(self) -> None:
         self._filter_mine = not self._filter_mine
         self._update_table(self._last_jobs_raw)
+
+    def action_cycle_state_filter(self) -> None:
+        _CYCLE = ("", "RUNNING", "PENDING", "FAILED")
+        current_idx = _CYCLE.index(self._filter_state) if self._filter_state in _CYCLE else 0
+        self._filter_state = _CYCLE[(current_idx + 1) % len(_CYCLE)]
+        self._update_table(self._last_jobs_raw)
+        self.notify(f"Filter: {self._filter_state or 'ALL'}", title="State Filter")
 
     def action_activate_search(self) -> None:
         bar = self.query_one("#search-bar", Input)
@@ -684,6 +693,12 @@ class JobsView(BaseDataTableView[Job]):
         if self._filter_mine:
             user = os.getenv("USER", "")
             filtered = [j for j in filtered if j.user == user]
+        if self._filter_state:
+            _FILTER_TERMINAL_STATES = {"FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "PREEMPTED", "OUT_OF_MEMORY"}
+            if self._filter_state == "FAILED":
+                filtered = [j for j in filtered if j.state in _FILTER_TERMINAL_STATES]
+            else:
+                filtered = [j for j in filtered if j.state == self._filter_state]
         if self._search_query:
             q = self._search_query.lower()
             filtered = [
@@ -729,6 +744,8 @@ class JobsView(BaseDataTableView[Job]):
         tags: list[str] = []
         if self._filter_mine:
             tags.append("[cyan]· mine[/]")
+        if self._filter_state:
+            tags.append(f"[cyan]· {self._filter_state}[/]")
         if self._search_query:
             tags.append(f'[yellow]· "{self._search_query}"[/]')
         if self._sort_col is not None:
