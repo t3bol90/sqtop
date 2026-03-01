@@ -51,7 +51,7 @@ def _defaults() -> dict:
 
 
 def _toml_escape(value: str) -> str:
-    return value.replace('"', '\\"').replace("\\", "\\\\")
+    return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
 def load() -> dict:
