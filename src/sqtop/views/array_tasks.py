@@ -86,7 +86,7 @@ class ArrayTaskScreen(ModalScreen[None]):
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         if event.state == WorkerState.SUCCESS:
             tasks: list[Job] = event.worker.result
-            self.app.call_from_thread(self._render_tasks, tasks)
+            self._render_tasks(tasks)
 
     def _render_tasks(self, tasks: list[Job]) -> None:
         table = self.query_one("#array-task-table", CyclicDataTable)
