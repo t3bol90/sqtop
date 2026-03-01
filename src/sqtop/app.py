@@ -36,7 +36,7 @@ class SqtopApp(App):
         Binding("S", "command_palette", "Commands", show=False),
         Binding("ctrl+p", "command_palette", "Commands", show=False),
         Binding("C", "column_toggle", "Columns", show=False),
-        Binding("question_mark", "show_keybindings", "Keybindings", show=False),
+        Binding("question_mark", "show_keybindings", "Keys", show=True),
     ]
 
     TITLE = "sqtop"

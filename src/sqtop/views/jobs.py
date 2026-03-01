@@ -8,6 +8,7 @@ import subprocess
 import sys
 from datetime import datetime
 
+from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widgets import DataTable, Input, Label
@@ -230,7 +231,7 @@ class JobsView(BaseDataTableView[Job]):
 
     BINDINGS = [
         Binding("enter", "open_job", "Open", show=True),
-        Binding("u", "toggle_mine", "My jobs", show=False),
+        Binding("u", "toggle_mine", "My jobs", show=True),
         Binding("slash", "activate_search", "Search", show=True),
         Binding("space", "toggle_select", "Select", show=True),
         Binding("asterisk", "select_all_visible", "Select all", show=False),
@@ -246,8 +247,10 @@ class JobsView(BaseDataTableView[Job]):
         Binding("Y", "yank_row", "Copy row", show=False),
         Binding("w", "watch_job", "Watch", show=True),
         Binding("D", "view_dependencies", "Deps", show=False),
-        Binding("f", "cycle_state_filter", "Filter state", show=False),
-        Binding("i", "job_info", "Info", show=False),
+        Binding("f", "cycle_state_filter", "Filter", show=True),
+        Binding("i", "job_info", "Info", show=True),
+        Binding("l", "view_log", "Log", show=True),
+        Binding("d", "show_detail", "Detail", show=False),
         Binding("a", "expand_array", "Array", show=False),
     ]
 
@@ -470,6 +473,31 @@ class JobsView(BaseDataTableView[Job]):
     def action_expand_array(self) -> None:
         if job := self._job_for_cursor():
             self.app.push_screen(ArrayTaskScreen(job))
+
+    @work(thread=True)
+    def action_view_log(self) -> None:
+        job = self._job_for_cursor()
+        if not job:
+            return
+        stdout_path, _ = fetch_log_paths(job.job_id)
+        if not stdout_path:
+            self.app.call_from_thread(
+                self.app.notify, "No log path found", severity="warning"
+            )
+            return
+        self.app.call_from_thread(
+            self.app.push_screen, LogViewerScreen(job.job_id, stdout_path, "stdout")
+        )
+
+    @work(thread=True)
+    def action_show_detail(self) -> None:
+        job = self._job_for_cursor()
+        if not job:
+            return
+        data = fetch_job_detail(job.job_id)
+        self.app.call_from_thread(
+            self.app.push_screen, JobDetailScreen(job.job_id, data)
+        )
 
     def _reload_column_visibility(self) -> None:
         cfg = config.load()
@@ -715,7 +743,7 @@ class JobsView(BaseDataTableView[Job]):
             q = self._search_query.lower()
             filtered = [
                 j for j in filtered
-                if q in j.name.lower() or q in j.state.lower() or q in j.partition.lower()
+                if q in j.name.lower() or q in j.state.lower() or q in j.partition.lower() or q in j.job_id
             ]
 
         if self._sort_col is None:
