@@ -207,6 +207,7 @@ class JobsView(BaseDataTableView[Job]):
             cfg_all.get("notifications", {}).get("desktop_enabled", True)
         )
         self._last_render_fp: tuple = ()
+        self._fp_skip_count: int = 0
 
     def compose(self) -> ComposeResult:
         yield Label("", id="jobs-header")
@@ -620,9 +621,14 @@ class JobsView(BaseDataTableView[Job]):
             frozenset(self._selected_job_ids),
         )
         if new_fp == self._last_render_fp:
-            self._update_header(jobs)
-            return
-        self._last_render_fp = new_fp
+            self._fp_skip_count += 1
+            if self._fp_skip_count < 5:
+                self._update_header(jobs)
+                return
+            self._fp_skip_count = 0
+        else:
+            self._fp_skip_count = 0
+            self._last_render_fp = new_fp
 
         self._rebuild_columns(self.size.width, self._last_jobs)
         self._render_rows(self._last_jobs)
