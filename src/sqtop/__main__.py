@@ -11,8 +11,8 @@ def main() -> None:
     parser.add_argument(
         "--remote",
         default="",
-        metavar="[user@]host",
-        help="Remote Slurm cluster via SSH",
+        metavar="HOST_OR_ALIAS",
+        help="Remote Slurm cluster via SSH host/alias from ~/.ssh/config",
     )
     parser.add_argument(
         "--ssh-key",
@@ -28,10 +28,6 @@ def main() -> None:
         cfg = config.load()
         r = cfg.get("remote", {})
         host = str(r.get("host", "")).strip()
-        key = str(r.get("ssh_key", "")).strip()
-        user = str(r.get("ssh_user", "")).strip()
-        if host and user and "@" not in host:
-            host = f"{user}@{host}"
     if host:
         slurm.set_remote(host, key)
 

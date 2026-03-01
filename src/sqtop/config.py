@@ -53,8 +53,6 @@ _DEFAULTS: dict = {
     },
     "remote": {
         "host": "",
-        "ssh_key": "",
-        "ssh_user": "",
     },
 }
 
@@ -201,8 +199,6 @@ def _write(cfg: dict) -> None:
     desktop_enabled = bool(notifications.get("desktop_enabled", _DEFAULTS["notifications"]["desktop_enabled"]))
 
     remote_host = str(remote.get("host", _DEFAULTS["remote"]["host"]))
-    remote_ssh_key = str(remote.get("ssh_key", _DEFAULTS["remote"]["ssh_key"]))
-    remote_ssh_user = str(remote.get("ssh_user", _DEFAULTS["remote"]["ssh_user"]))
 
     _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     lines = [
@@ -255,8 +251,6 @@ def _write(cfg: dict) -> None:
         "",
         "[remote]",
         f'host = "{_toml_escape(remote_host)}"',
-        f'ssh_key = "{_toml_escape(remote_ssh_key)}"',
-        f'ssh_user = "{_toml_escape(remote_ssh_user)}"',
         "",
     ]
     _CONFIG_FILE.write_text("\n".join(lines), encoding="utf-8")

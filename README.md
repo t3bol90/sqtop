@@ -36,6 +36,19 @@ sqtop
 
 Prerequisite: Slurm CLI commands (`squeue`, `sinfo`, `scontrol`, `scancel`) must be available in `PATH`.
 
+Remote cluster via SSH (uses your existing `~/.ssh/config`):
+
+```bash
+sqtop --remote my-cluster
+```
+
+`my-cluster` can be any SSH host alias or host string that already works with `ssh my-cluster`.
+If needed, you can still override identity file per run:
+
+```bash
+sqtop --remote my-cluster --ssh-key ~/.ssh/id_ed25519
+```
+
 If you run with this repo's local Docker-backed cluster shims, use:
 
 ```bash
@@ -80,6 +93,9 @@ enabled = true
 history_size = 100
 warn_pending_ratio = 0.7
 warn_down_nodes = 1
+
+[remote]
+host = "my-cluster"
 ```
 
 Attach behavior:
