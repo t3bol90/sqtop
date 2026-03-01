@@ -372,6 +372,110 @@ def fetch_command_health(limit: int = 100) -> list[CommandStat]:
     return list(_COMMAND_HISTORY)[-limit:]
 
 
+def _parse_slurm_duration(s: str) -> int:
+    """Parse Slurm HH:MM:SS (or D-HH:MM:SS) duration string to total seconds."""
+    s = s.strip()
+    if not s or s == "0":
+        return 0
+    days = 0
+    if "-" in s:
+        day_part, s = s.split("-", 1)
+        try:
+            days = int(day_part)
+        except ValueError:
+            return 0
+    parts = s.split(":")
+    try:
+        if len(parts) == 3:
+            return days * 86400 + int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+        elif len(parts) == 2:
+            return days * 86400 + int(parts[0]) * 60 + int(parts[1])
+        elif len(parts) == 1:
+            return days * 86400 + int(parts[0])
+    except ValueError:
+        return 0
+    return 0
+
+
+def fetch_job_efficiency(job_id: str) -> dict:
+    """Fetch CPU and memory efficiency metrics via sacct.
+
+    Returns dict with keys:
+      - cpu_eff: float 0.0-1.0 (TotalCPU / CPUTimeRAW)
+      - mem_eff: float 0.0-1.0 (MaxRSS / AllocMem)
+      - cpu_used_str: str like "3:12:00"
+      - cpu_alloc_str: str like "5:10:00"
+      - mem_peak_mb: int
+      - mem_alloc_mb: int
+      - available: bool (False if sacct not found or parse error)
+
+    Command: sacct -j <job_id> --parsable2 --noheader
+             -o CPUTimeRAW,TotalCPU,AllocMem,MaxRSS
+    """
+    _unavailable: dict = {"available": False}
+    cmd = f"sacct -j {shlex.quote(job_id)} --parsable2 --noheader -o CPUTimeRAW,TotalCPU,AllocMem,MaxRSS"
+    out, ok, _ = _run_result(cmd)
+    if not ok or not out.strip():
+        return _unavailable
+    try:
+        # Use the first non-step line (no dot in the job_id column, i.e. no "12345.batch")
+        target_line = ""
+        for line in out.strip().splitlines():
+            parts = line.split("|")
+            if len(parts) < 4:
+                continue
+            target_line = line
+            break
+        if not target_line:
+            return _unavailable
+        parts = target_line.split("|")
+        cpu_time_raw_str = parts[0].strip()   # seconds as integer
+        total_cpu_str = parts[1].strip()       # HH:MM:SS
+        alloc_mem_str = parts[2].strip()       # MB (may have 'M' suffix) or KB
+        max_rss_str = parts[3].strip()         # KB (may be 0)
+
+        cpu_time_raw = int(cpu_time_raw_str) if cpu_time_raw_str.isdigit() else 0
+        total_cpu_secs = _parse_slurm_duration(total_cpu_str)
+
+        # Parse AllocMem: may be "2000M", "2048K", or bare integer (MB)
+        alloc_mem_mb = 0
+        if alloc_mem_str.endswith("M") or alloc_mem_str.endswith("m"):
+            alloc_mem_mb = int(alloc_mem_str[:-1])
+        elif alloc_mem_str.endswith("K") or alloc_mem_str.endswith("k"):
+            alloc_mem_mb = int(alloc_mem_str[:-1]) // 1024
+        elif alloc_mem_str.isdigit():
+            alloc_mem_mb = int(alloc_mem_str)
+
+        # MaxRSS is in KB
+        max_rss_mb = 0
+        if max_rss_str.endswith("K") or max_rss_str.endswith("k"):
+            max_rss_mb = int(max_rss_str[:-1]) // 1024
+        elif max_rss_str.endswith("M") or max_rss_str.endswith("m"):
+            max_rss_mb = int(max_rss_str[:-1])
+        elif max_rss_str.isdigit():
+            max_rss_mb = int(max_rss_str) // 1024
+
+        cpu_eff = (total_cpu_secs / cpu_time_raw) if cpu_time_raw > 0 else 0.0
+        mem_eff = (max_rss_mb / alloc_mem_mb) if alloc_mem_mb > 0 else 0.0
+
+        # Build human-readable cpu_alloc_str from CPUTimeRAW seconds
+        h, rem = divmod(cpu_time_raw, 3600)
+        m, s = divmod(rem, 60)
+        cpu_alloc_str = f"{h}:{m:02d}:{s:02d}"
+
+        return {
+            "available": True,
+            "cpu_eff": min(cpu_eff, 1.0),
+            "mem_eff": min(mem_eff, 1.0),
+            "cpu_used_str": total_cpu_str,
+            "cpu_alloc_str": cpu_alloc_str,
+            "mem_peak_mb": max_rss_mb,
+            "mem_alloc_mb": alloc_mem_mb,
+        }
+    except (ValueError, IndexError, ZeroDivisionError):
+        return _unavailable
+
+
 # ---------------------------------------------------------------------------
 # Job array tasks
 # ---------------------------------------------------------------------------
