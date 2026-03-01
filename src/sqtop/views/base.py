@@ -54,11 +54,15 @@ class BaseDataTableView(Static, Generic[T]):
         self._begin_interval()
 
     def set_interval_rate(self, interval: float) -> None:
-        """Change the auto-refresh interval."""
+        """Change the auto-refresh interval, re-applying the original stagger offset."""
         self._interval = interval
         if self._timer:
             self._timer.stop()
-        self._timer = self.set_interval(self._interval, self.refresh_data)
+            self._timer = None
+        if self._start_offset > 0:
+            self.set_timer(self._start_offset, self._begin_interval)
+        else:
+            self._begin_interval()
 
     @work(thread=True)
     def refresh_data(self) -> None:
