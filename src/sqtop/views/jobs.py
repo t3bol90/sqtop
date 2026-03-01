@@ -161,7 +161,9 @@ class JobsView(BaseDataTableView[Job]):
         Binding("t", "sort_time", show=False),
         Binding("c", "sort_cpus", show=False),
         Binding("y", "yank_job_id", "Copy ID", show=False),
+        Binding("Y", "yank_row", "Copy row", show=False),
         Binding("w", "watch_job", "Watch", show=True),
+        Binding("D", "view_dependencies", "Deps", show=False),
     ]
 
     def __init__(self, interval: float = 2.0) -> None:
@@ -191,6 +193,16 @@ class JobsView(BaseDataTableView[Job]):
             safety_cfg.get("confirm_bulk_actions", True), True
         )
         self._selected_job_ids: set[str] = set()
+        view_state = cfg_all.get("view_state", {})
+        saved_sort = str(view_state.get("jobs_sort_col", ""))
+        if saved_sort in _SORT_KEYS:
+            self._sort_col = saved_sort
+            self._sort_reversed = bool(view_state.get("jobs_sort_reversed", False))
+        self._hidden_cols: set[str] = set(cfg_all.get("columns", {}).get("jobs_hidden", []))
+        self._warn_pending_ratio = float(cfg_all.get("health", {}).get("warn_pending_ratio", 0.7))
+        self._desktop_notify_enabled = bool(
+            cfg_all.get("notifications", {}).get("desktop_enabled", True)
+        )
 
     def compose(self) -> ComposeResult:
         yield Label("", id="jobs-header")
@@ -242,8 +254,15 @@ class JobsView(BaseDataTableView[Job]):
     def _cell_text(self, job: Job, col_name: str) -> str:
         return _truncate(self._plain_cell(job, col_name), self._col_max.get(col_name))
 
+    def _visible_cols_filtered(self, width: int) -> list[tuple[str, int]]:
+        return [
+            (name, min_w)
+            for name, min_w, min_term_w in COLUMNS
+            if min_term_w <= width and name not in self._hidden_cols
+        ]
+
     def _rebuild_columns(self, width: int, jobs: list[Job]) -> None:
-        visible = _visible_cols(width)
+        visible = self._visible_cols_filtered(width)
         new_cols: list[tuple[str, int]] = []
         for col_name, min_w in visible:
             if jobs:
@@ -303,6 +322,7 @@ class JobsView(BaseDataTableView[Job]):
 
     def _set_sort(self, col: str) -> None:
         super()._set_sort(col)
+        config.update({"view_state": {"jobs_sort_col": self._sort_col or "", "jobs_sort_reversed": self._sort_reversed}})
         self._update_table(self._last_jobs_raw)
 
     def action_sort_state(self) -> None:
@@ -324,6 +344,28 @@ class JobsView(BaseDataTableView[Job]):
             self.app.notify(f"Copied: {job.job_id}", title="Clipboard")
         else:
             self.app.notify("Clipboard unavailable", severity="warning")
+
+    def action_yank_row(self) -> None:
+        row_idx = self.query_one(CyclicDataTable).cursor_row
+        if row_idx >= len(self._last_jobs):
+            return
+        job = self._last_jobs[row_idx]
+        tsv = "\t".join(self._plain_cell(job, name) for name, _ in self._current_cols)
+        if _copy_to_clipboard(tsv):
+            self.app.notify(f"Copied row for job {job.job_id}", title="Clipboard")
+        else:
+            self.app.notify("Clipboard unavailable", severity="warning")
+
+    def action_view_dependencies(self) -> None:
+        if job := self._job_for_cursor():
+            from .dependency import JobDependencyScreen
+            self.app.push_screen(JobDependencyScreen(job))
+
+    def _reload_column_visibility(self) -> None:
+        cfg = config.load()
+        self._hidden_cols = set(cfg.get("columns", {}).get("jobs_hidden", []))
+        self._rebuild_columns(self.size.width, self._last_jobs)
+        self._render_rows(self._last_jobs)
 
     def action_watch_job(self) -> None:
         table = self.query_one(CyclicDataTable)
@@ -575,6 +617,9 @@ class JobsView(BaseDataTableView[Job]):
         now = datetime.now().strftime("%H:%M:%S")
         running = sum(1 for j in all_jobs if j.state == "RUNNING")
         pending = sum(1 for j in all_jobs if j.state == "PENDING")
+        filtered = len(self._last_jobs)
+        total = len(all_jobs)
+        count_str = f"{filtered}/{total} jobs" if filtered != total else f"{total} total"
 
         tags: list[str] = []
         if self._filter_mine:
@@ -590,12 +635,14 @@ class JobsView(BaseDataTableView[Job]):
             tags.append(f"[blue]· {len(self._selected_job_ids)} selected[/]")
         if self._expert_mode_enabled():
             tags.append("[red]· expert[/]")
+        if all_jobs and (pending / len(all_jobs)) > self._warn_pending_ratio:
+            tags.append(f"[red bold]! {pending}/{len(all_jobs)} pending[/]")
 
         suffix = ("  " + "  ".join(tags)) if tags else ""
         self.query_one("#jobs-header", Label).update(
             f"[b]squeue[/b]  [green]{running} running[/]  "
             f"[yellow]{pending} pending[/]  "
-            f"[dim]{len(all_jobs)} total  updated {now}[/]"
+            f"[dim]{count_str}  updated {now}[/]"
             f"{suffix}"
         )
 
@@ -615,6 +662,9 @@ class JobsView(BaseDataTableView[Job]):
                     severity="information",
                     timeout=10,
                 )
+                if self._desktop_notify_enabled:
+                    from .notify import desktop_notify
+                    desktop_notify("sqtop: Job finished", f"Job {job_id} → {state_str}")
                 finished.append(job_id)
             elif cur != last_state:
                 self._watched_states[job_id] = cur

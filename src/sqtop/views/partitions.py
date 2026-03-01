@@ -11,6 +11,7 @@ from textual.widgets import DataTable, Label
 from .base import BaseDataTableView
 from ..slurm import ClusterSummary, fetch_cluster_summary
 from .widgets import CyclicDataTable
+from .. import config
 
 AVAIL_COLORS = {
     "up":   "green",
@@ -50,15 +51,35 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
     def __init__(self, interval: float = 5.0) -> None:
         super().__init__(interval=interval)
         self._last_summaries: list[ClusterSummary] = []
+        cfg_all = config.load()
+        view_state = cfg_all.get("view_state", {})
+        saved_sort = str(view_state.get("partitions_sort_col", ""))
+        if saved_sort in {"partition", "nodes"}:
+            self._sort_col = saved_sort
+            self._sort_reversed = bool(view_state.get("partitions_sort_reversed", False))
+        self._hidden_cols: set[str] = set(cfg_all.get("columns", {}).get("partitions_hidden", []))
 
     def compose(self) -> ComposeResult:
         yield Label("", id="partitions-header")
         yield CyclicDataTable(id="partitions-table", cursor_type="row", zebra_stripes=True)
 
-    def on_mount(self) -> None:
+    def _visible_cols_filtered(self) -> list[tuple[str, int]]:
+        return [(name, w) for name, w in COLUMNS if name not in self._hidden_cols]
+
+    def _rebuild_columns(self) -> None:
         table = self.query_one(CyclicDataTable)
-        for name, width in COLUMNS:
+        table.clear(columns=True)
+        for name, width in self._visible_cols_filtered():
             table.add_column(name, width=width)
+
+    def _reload_column_visibility(self) -> None:
+        cfg = config.load()
+        self._hidden_cols = set(cfg.get("columns", {}).get("partitions_hidden", []))
+        self._rebuild_columns()
+        self._render_rows(self._last_summaries)
+
+    def on_mount(self) -> None:
+        self._rebuild_columns()
         self.refresh_data()
         self._timer = self.set_interval(self._interval, self.refresh_data)
 
@@ -70,6 +91,7 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
 
     def _set_sort(self, col: str) -> None:
         super()._set_sort(col)
+        config.update({"view_state": {"partitions_sort_col": self._sort_col or "", "partitions_sort_reversed": self._sort_reversed}})
         self._render_rows(self._last_summaries)
 
     def action_sort_partition(self) -> None:
@@ -130,22 +152,29 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
         table.move_cursor(row=row)
         table.scroll_to(y=scroll_y, animate=False)
 
+    def _cell_for_col(self, s: ClusterSummary, name: str) -> str:
+        avail_color = AVAIL_COLORS.get(s.avail.lower(), "white")
+        state_lower = s.state.lower().split("*")[0].rstrip("-")
+        state_color = STATE_COLORS.get(state_lower, "white")
+        if name == "PARTITION":
+            return f"[bold]{s.partition}[/bold]"
+        if name == "AVAIL":
+            return f"[{avail_color}]{s.avail}[/]"
+        if name == "TIMELIMIT":
+            return s.timelimit
+        if name == "NODES":
+            return s.nodes
+        if name == "STATE":
+            return f"[{state_color}]{s.state}[/]"
+        return s.nodelist
+
     def _render_rows(self, summaries: list[ClusterSummary]) -> None:
         rows = self._sorted_rows(summaries)
+        visible = self._visible_cols_filtered()
 
         table = self.query_one(CyclicDataTable)
         table.clear()
         for s in rows:
-            avail_color = AVAIL_COLORS.get(s.avail.lower(), "white")
-            state_lower = s.state.lower().split("*")[0].rstrip("-")
-            state_color = STATE_COLORS.get(state_lower, "white")
-            table.add_row(
-                f"[bold]{s.partition}[/bold]",
-                f"[{avail_color}]{s.avail}[/]",
-                s.timelimit,
-                s.nodes,
-                f"[{state_color}]{s.state}[/]",
-                s.nodelist,
-            )
+            table.add_row(*[self._cell_for_col(s, name) for name, _ in visible])
         if rows and table.cursor_row < 0:
             table.move_cursor(row=0)

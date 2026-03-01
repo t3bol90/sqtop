@@ -13,6 +13,7 @@ from .widgets import CyclicDataTable
 from .node_detail import NodeDetailScreen
 
 from ..slurm import Node, fetch_nodes
+from .. import config
 
 STATE_COLORS = {
     "idle":      "green",
@@ -96,6 +97,14 @@ class NodesView(BaseDataTableView[Node]):
         super().__init__(interval=interval)
         self._last_nodes: list[Node] = []
         self._current_cols: list[tuple[str, int]] = []
+        cfg_all = config.load()
+        view_state = cfg_all.get("view_state", {})
+        saved_sort = str(view_state.get("nodes_sort_col", ""))
+        if saved_sort in {"state", "cpu", "mem"}:
+            self._sort_col = saved_sort
+            self._sort_reversed = bool(view_state.get("nodes_sort_reversed", False))
+        self._hidden_cols: set[str] = set(cfg_all.get("columns", {}).get("nodes_hidden", []))
+        self._warn_down_nodes = int(cfg_all.get("health", {}).get("warn_down_nodes", 1))
 
     def compose(self) -> ComposeResult:
         yield Label("", id="nodes-header")
@@ -113,19 +122,32 @@ class NodesView(BaseDataTableView[Node]):
         return item.name
 
     def on_resize(self, event) -> None:
-        new_cols = _visible_cols(event.size.width)
+        new_cols = self._visible_cols_filtered(event.size.width)
         if new_cols != self._current_cols:
             state = self._capture_table_state()
             self._rebuild_columns(event.size.width)
             self._render_rows(self._last_nodes)
             self._restore_table_state(state, self._sorted_visible(self._last_nodes))
 
+    def _visible_cols_filtered(self, width: int) -> list[tuple[str, int]]:
+        return [
+            (name, w)
+            for name, w, min_w in COLUMNS
+            if min_w <= width and name not in self._hidden_cols
+        ]
+
     def _rebuild_columns(self, width: int) -> None:
-        self._current_cols = _visible_cols(width)
+        self._current_cols = self._visible_cols_filtered(width)
         table = self.query_one(CyclicDataTable)
         table.clear(columns=True)
         for name, col_width in self._current_cols:
             table.add_column(name, width=col_width)
+
+    def _reload_column_visibility(self) -> None:
+        cfg = config.load()
+        self._hidden_cols = set(cfg.get("columns", {}).get("nodes_hidden", []))
+        self._rebuild_columns(self.size.width)
+        self._render_rows(self._last_nodes)
 
     def _capture_table_state(self) -> tuple[int, float, str | None]:
         table = self.query_one(CyclicDataTable)
@@ -155,6 +177,7 @@ class NodesView(BaseDataTableView[Node]):
 
     def _set_sort(self, col: str) -> None:
         super()._set_sort(col)
+        config.update({"view_state": {"nodes_sort_col": self._sort_col or "", "nodes_sort_reversed": self._sort_reversed}})
         self._render_rows(self._last_nodes)
 
     def action_sort_state(self) -> None:
@@ -191,12 +214,13 @@ class NodesView(BaseDataTableView[Node]):
         if self._sort_col:
             arrow = "↑" if self._sort_reversed else "↓"
             sort_tag = f"  [dim]sort:{self._sort_col}{arrow}[/]"
+        warn_tag = f"  [red bold]! {down} DOWN/DRAIN[/]" if down >= self._warn_down_nodes else ""
         self.query_one("#nodes-header", Label).update(
             f"[b]sinfo[/b]  [green]{idle} idle[/]  "
             f"[cyan]{alloc} alloc[/]  [yellow]{mixed} mixed[/]  "
             f"[red]{down} down[/]  "
             f"[dim]{len(visible)} total  updated {now}[/]"
-            f"{sort_tag}"
+            f"{sort_tag}{warn_tag}"
         )
 
     def _render_rows(self, nodes: list[Node]) -> None:

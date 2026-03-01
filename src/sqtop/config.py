@@ -35,6 +35,27 @@ _DEFAULTS: dict = {
         "warn_pending_ratio": 0.7,
         "warn_down_nodes": 1,
     },
+    "view_state": {
+        "jobs_sort_col": "",
+        "jobs_sort_reversed": False,
+        "nodes_sort_col": "",
+        "nodes_sort_reversed": False,
+        "partitions_sort_col": "",
+        "partitions_sort_reversed": False,
+    },
+    "columns": {
+        "jobs_hidden": [],
+        "nodes_hidden": [],
+        "partitions_hidden": [],
+    },
+    "notifications": {
+        "desktop_enabled": True,
+    },
+    "remote": {
+        "host": "",
+        "ssh_key": "",
+        "ssh_user": "",
+    },
 }
 
 
@@ -47,6 +68,10 @@ def _defaults() -> dict:
         "ui": dict(_DEFAULTS["ui"]),
         "safety": dict(_DEFAULTS["safety"]),
         "health": dict(_DEFAULTS["health"]),
+        "view_state": dict(_DEFAULTS["view_state"]),
+        "columns": {k: list(v) for k, v in _DEFAULTS["columns"].items()},
+        "notifications": dict(_DEFAULTS["notifications"]),
+        "remote": dict(_DEFAULTS["remote"]),
     }
 
 
@@ -62,7 +87,7 @@ def load() -> dict:
         with _CONFIG_FILE.open("rb") as f:
             data = tomllib.load(f)
         cfg = _defaults()
-        nested_keys = {"jobs", "attach", "ui", "safety", "health"}
+        nested_keys = {"jobs", "attach", "ui", "safety", "health", "view_state", "columns", "notifications", "remote"}
         cfg.update({k: v for k, v in data.items() if k not in nested_keys})
         jobs = dict(_DEFAULTS["jobs"])
         if isinstance(data.get("jobs"), dict):
@@ -84,6 +109,24 @@ def load() -> dict:
         if isinstance(data.get("health"), dict):
             health.update(data["health"])
         cfg["health"] = health
+        view_state = dict(_DEFAULTS["view_state"])
+        if isinstance(data.get("view_state"), dict):
+            view_state.update(data["view_state"])
+        cfg["view_state"] = view_state
+        columns = {k: list(v) for k, v in _DEFAULTS["columns"].items()}
+        if isinstance(data.get("columns"), dict):
+            for k, v in data["columns"].items():
+                if isinstance(v, list):
+                    columns[k] = v
+        cfg["columns"] = columns
+        notifications = dict(_DEFAULTS["notifications"])
+        if isinstance(data.get("notifications"), dict):
+            notifications.update(data["notifications"])
+        cfg["notifications"] = notifications
+        remote = dict(_DEFAULTS["remote"])
+        if isinstance(data.get("remote"), dict):
+            remote.update(data["remote"])
+        cfg["remote"] = remote
         return cfg
     except Exception:
         return _defaults()
@@ -108,12 +151,20 @@ def update(overrides: dict) -> None:
     _write(cfg)
 
 
+def _toml_str_list(lst: list) -> str:
+    return "[" + ", ".join(f'"{x}"' for x in lst) + "]"
+
+
 def _write(cfg: dict) -> None:
     jobs = cfg.get("jobs", {})
     attach = cfg.get("attach", {})
     ui = cfg.get("ui", {})
     safety = cfg.get("safety", {})
     health = cfg.get("health", {})
+    view_state = cfg.get("view_state", {})
+    columns = cfg.get("columns", {})
+    notifications = cfg.get("notifications", {})
+    remote = cfg.get("remote", {})
 
     enabled = bool(attach.get("enabled", _DEFAULTS["attach"]["enabled"]))
     default_command = str(attach.get("default_command", _DEFAULTS["attach"]["default_command"]))
@@ -135,6 +186,23 @@ def _write(cfg: dict) -> None:
 
     theme = str(cfg.get("theme", _DEFAULTS["theme"]))
     interval = float(cfg.get("interval", _DEFAULTS["interval"]))
+
+    jobs_sort_col = str(view_state.get("jobs_sort_col", _DEFAULTS["view_state"]["jobs_sort_col"]))
+    jobs_sort_reversed = bool(view_state.get("jobs_sort_reversed", _DEFAULTS["view_state"]["jobs_sort_reversed"]))
+    nodes_sort_col = str(view_state.get("nodes_sort_col", _DEFAULTS["view_state"]["nodes_sort_col"]))
+    nodes_sort_reversed = bool(view_state.get("nodes_sort_reversed", _DEFAULTS["view_state"]["nodes_sort_reversed"]))
+    partitions_sort_col = str(view_state.get("partitions_sort_col", _DEFAULTS["view_state"]["partitions_sort_col"]))
+    partitions_sort_reversed = bool(view_state.get("partitions_sort_reversed", _DEFAULTS["view_state"]["partitions_sort_reversed"]))
+
+    jobs_hidden = list(columns.get("jobs_hidden", []))
+    nodes_hidden = list(columns.get("nodes_hidden", []))
+    partitions_hidden = list(columns.get("partitions_hidden", []))
+
+    desktop_enabled = bool(notifications.get("desktop_enabled", _DEFAULTS["notifications"]["desktop_enabled"]))
+
+    remote_host = str(remote.get("host", _DEFAULTS["remote"]["host"]))
+    remote_ssh_key = str(remote.get("ssh_key", _DEFAULTS["remote"]["ssh_key"]))
+    remote_ssh_user = str(remote.get("ssh_user", _DEFAULTS["remote"]["ssh_user"]))
 
     _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     lines = [
@@ -168,6 +236,27 @@ def _write(cfg: dict) -> None:
         f"history_size = {history_size}",
         f"warn_pending_ratio = {warn_pending_ratio}",
         f"warn_down_nodes = {warn_down_nodes}",
+        "",
+        "[view_state]",
+        f'jobs_sort_col = "{_toml_escape(jobs_sort_col)}"',
+        f'jobs_sort_reversed = {"true" if jobs_sort_reversed else "false"}',
+        f'nodes_sort_col = "{_toml_escape(nodes_sort_col)}"',
+        f'nodes_sort_reversed = {"true" if nodes_sort_reversed else "false"}',
+        f'partitions_sort_col = "{_toml_escape(partitions_sort_col)}"',
+        f'partitions_sort_reversed = {"true" if partitions_sort_reversed else "false"}',
+        "",
+        "[columns]",
+        f"jobs_hidden = {_toml_str_list(jobs_hidden)}",
+        f"nodes_hidden = {_toml_str_list(nodes_hidden)}",
+        f"partitions_hidden = {_toml_str_list(partitions_hidden)}",
+        "",
+        "[notifications]",
+        f'desktop_enabled = {"true" if desktop_enabled else "false"}',
+        "",
+        "[remote]",
+        f'host = "{_toml_escape(remote_host)}"',
+        f'ssh_key = "{_toml_escape(remote_ssh_key)}"',
+        f'ssh_user = "{_toml_escape(remote_ssh_user)}"',
         "",
     ]
     _CONFIG_FILE.write_text("\n".join(lines), encoding="utf-8")
