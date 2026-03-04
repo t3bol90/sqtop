@@ -92,17 +92,20 @@ class Job:
     time_limit: str
     reason: str = ""
     nodelist: str = ""
+    qos: str = ""
 
 
 def fetch_jobs() -> list[Job]:
     """Return jobs from squeue -o with parseable format."""
-    fmt = "%i|%j|%u|%T|%P|%D|%C|%M|%l|%R|%N"
+    fmt = "%i|%j|%u|%T|%P|%D|%C|%M|%l|%R|%N|%q"
     out = _run(f"squeue --noheader -o '{fmt}'")
     jobs = []
     for line in out.strip().splitlines():
         parts = line.split("|")
         if len(parts) < 11:
             continue
+        qos_raw = parts[11] if len(parts) > 11 else ""
+        qos = "" if qos_raw in ("N/A", "(null)") else qos_raw
         jobs.append(Job(
             job_id=parts[0],
             name=parts[1],
@@ -116,6 +119,7 @@ def fetch_jobs() -> list[Job]:
             reason=parts[9],
             nodelist=parts[10],
             num_nodes=parts[5],
+            qos=qos,
         ))
     return jobs
 

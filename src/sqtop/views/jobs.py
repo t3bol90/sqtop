@@ -166,6 +166,7 @@ _SORT_KEYS = {
     "state":  lambda j: (j.state, int(j.job_id) if j.job_id.isdigit() else 0),
     "time":   lambda j: j.time_used,
     "cpus":   lambda j: int(j.num_cpus) if j.num_cpus.isdigit() else 0,
+    "qos":    lambda j: (j.qos.lower(), _job_sort_key(j)),
 }
 
 # (header, min_col_width, min_terminal_width_to_show)
@@ -177,6 +178,7 @@ COLUMNS: list[tuple[str, int, int]] = [
     ("TIME",              10,  65),
     ("TIME_LEFT",         10,  65),
     ("PARTITION",          9,  90),
+    ("QOS",                8,  90),
     ("NODES",              6,  90),
     ("CPUS",               6, 105),
     ("TIME_LIMIT",        10, 105),
@@ -187,6 +189,7 @@ _DEFAULT_COL_MAX = {
     "NAME": 24,
     "USER": 12,
     "PARTITION": 14,
+    "QOS": 12,
     "NODELIST(REASON)": 40,
 }
 
@@ -194,6 +197,7 @@ _CONFIG_COL_KEYS = {
     "NAME": "name_max",
     "USER": "user_max",
     "PARTITION": "partition_max",
+    "QOS": "qos_max",
     "NODELIST(REASON)": "nodelist_reason_max",
 }
 
@@ -339,6 +343,8 @@ class JobsView(BaseDataTableView[Job]):
             return display
         if col_name == "PARTITION":
             return job.partition
+        if col_name == "QOS":
+            return job.qos or ""
         if col_name == "NODES":
             return job.nodes
         if col_name == "CPUS":

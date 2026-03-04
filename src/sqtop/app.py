@@ -179,6 +179,20 @@ class SqtopApp(App):
             "Show/hide columns for the current view",
             self.action_column_toggle,
         )
+        _sort_labels = [
+            ("", "State priority (default)"),
+            ("state", "State"),
+            ("time", "Time used"),
+            ("cpus", "CPUs"),
+            ("qos", "QOS"),
+        ]
+        for sort_val, sort_label in _sort_labels:
+            yield SystemCommand(
+                f"Jobs default sort: {sort_label}",
+                f"Set jobs default sort to '{sort_label}' and persist",
+                lambda v=sort_val: self._set_jobs_default_sort(v),
+                discover=False,
+            )
         yield SystemCommand(
             "Save screenshot",
             "Save a screenshot of sqtop",
@@ -189,6 +203,15 @@ class SqtopApp(App):
     def _set_interval_and_save(self, secs: float) -> None:
         self.set_refresh_interval(secs)
         config.save(self.theme, secs)
+
+    def _set_jobs_default_sort(self, col: str) -> None:
+        config.update({"view_state": {"jobs_sort_col": col, "jobs_sort_reversed": False}})
+        try:
+            self.query_one(JobsView)._set_sort(col)
+        except Exception:
+            pass
+        label = col or "state priority (default)"
+        self.notify(f"Jobs sort: {label}", title="Settings")
 
     def _toggle_expert_mode(self) -> None:
         self.expert_mode = not self.expert_mode

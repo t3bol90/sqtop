@@ -15,6 +15,7 @@ _DEFAULTS: dict = {
         "user_max": 12,
         "partition_max": 14,
         "nodelist_reason_max": 40,
+        "qos_max": 12,
     },
     "attach": {
         "enabled": True,
@@ -213,6 +214,7 @@ def _write(cfg: dict) -> None:
             "nodelist_reason_max = "
             f'{int(jobs.get("nodelist_reason_max", _DEFAULTS["jobs"]["nodelist_reason_max"]))}'
         ),
+        f'qos_max = {int(jobs.get("qos_max", _DEFAULTS["jobs"]["qos_max"]))}',
         "",
         "[attach]",
         f'enabled = {"true" if enabled else "false"}',
