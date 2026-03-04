@@ -74,6 +74,7 @@ name_max = 24
 user_max = 12
 partition_max = 14
 nodelist_reason_max = 40
+qos_max = 12
 
 [attach]
 enabled = true
@@ -97,6 +98,8 @@ warn_down_nodes = 1
 [remote]
 host = "my-cluster"
 ```
+
+The QOS column appears automatically at terminal widths ≥ 90 characters. The persistent default sort (including sort-by-QOS) is set via the command palette (`S` → "Jobs default sort") and survives restarts.
 
 Attach behavior:
 - Attach actions are available from `Enter` on a `RUNNING` job.
@@ -138,6 +141,7 @@ Attach behavior:
 | `s` | Sort by state (toggle asc/desc) |
 | `t` | Sort by time |
 | `c` | Sort by CPUs |
+| `S` → "Jobs default sort" | Set persistent default sort (state priority / state / time / CPUs / QOS) |
 | `y` | Copy selected job ID |
 | `Shift+Y` | Copy current row |
 | `w` | Toggle watch on selected job |

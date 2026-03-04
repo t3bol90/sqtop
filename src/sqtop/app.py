@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
+from textual.css.query import NoMatches
 from textual.screen import Screen
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 
@@ -17,6 +18,15 @@ from .views.history import HistoryView
 from .views.column_toggle import ColumnToggleScreen
 from .views.keybindings_help import KeybindingHelpScreen
 from . import config, slurm
+
+# (sort_key, human-readable label) — order determines palette display order
+_JOBS_SORT_OPTIONS: list[tuple[str, str]] = [
+    ("", "State priority (default)"),
+    ("state", "State"),
+    ("time", "Time used"),
+    ("cpus", "CPUs"),
+    ("qos", "QOS"),
+]
 
 
 class SqtopApp(App):
@@ -179,14 +189,7 @@ class SqtopApp(App):
             "Show/hide columns for the current view",
             self.action_column_toggle,
         )
-        _sort_labels = [
-            ("", "State priority (default)"),
-            ("state", "State"),
-            ("time", "Time used"),
-            ("cpus", "CPUs"),
-            ("qos", "QOS"),
-        ]
-        for sort_val, sort_label in _sort_labels:
+        for sort_val, sort_label in _JOBS_SORT_OPTIONS:
             yield SystemCommand(
                 f"Jobs default sort: {sort_label}",
                 f"Set jobs default sort to '{sort_label}' and persist",
@@ -205,12 +208,11 @@ class SqtopApp(App):
         config.save(self.theme, secs)
 
     def _set_jobs_default_sort(self, col: str) -> None:
-        config.update({"view_state": {"jobs_sort_col": col, "jobs_sort_reversed": False}})
+        label = next(lbl for key, lbl in _JOBS_SORT_OPTIONS if key == col)
         try:
             self.query_one(JobsView)._set_sort(col)
-        except Exception:
-            pass
-        label = col or "state priority (default)"
+        except NoMatches:
+            config.update({"view_state": {"jobs_sort_col": col, "jobs_sort_reversed": False}})
         self.notify(f"Jobs sort: {label}", title="Settings")
 
     def _toggle_expert_mode(self) -> None:
