@@ -90,8 +90,9 @@ class BaseDataTableView(Static, Generic[T]):
 
     def _set_sort(self, col: str) -> None:
         """Toggle sort column; reverse direction if same column selected again."""
-        if self._sort_col == col:
+        normalized = col or None  # "" → None (default/state-priority sort)
+        if self._sort_col == normalized:
             self._sort_reversed = not self._sort_reversed
         else:
-            self._sort_col = col
+            self._sort_col = normalized
             self._sort_reversed = False
