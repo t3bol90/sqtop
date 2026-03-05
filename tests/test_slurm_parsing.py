@@ -9,7 +9,7 @@ from sqtop import slurm
 # ── fetch_jobs ────────────────────────────────────────────────────────────────
 
 def test_fetch_jobs_normal(mock_run):
-    mock_run("123|myjob|alice|RUNNING|gpu|1|8|1:00:00|8:00:00|None|node01\n")
+    mock_run("123|myjob|alice|RUNNING|gpu|1|8|1:00:00|8:00:00|None|node01|normal\n")
     jobs = slurm.fetch_jobs()
     assert len(jobs) == 1
     j = jobs[0]
@@ -23,6 +23,7 @@ def test_fetch_jobs_normal(mock_run):
     assert j.time_limit == "8:00:00"
     assert j.reason == "None"
     assert j.nodelist == "node01"
+    assert j.qos == "normal"
 
 
 def test_fetch_jobs_empty(mock_run):
@@ -30,15 +31,23 @@ def test_fetch_jobs_empty(mock_run):
     assert slurm.fetch_jobs() == []
 
 
+def test_fetch_jobs_qos_normalization(mock_run):
+    """N/A and (null) QOS values are normalized to empty string."""
+    mock_run("1|a|alice|RUNNING|gpu|1|4|0:01|8:00:00|None|node01|N/A\n")
+    assert slurm.fetch_jobs()[0].qos == ""
+    mock_run("2|b|bob|RUNNING|gpu|1|4|0:01|8:00:00|None|node02|(null)\n")
+    assert slurm.fetch_jobs()[0].qos == ""
+
+
 def test_fetch_jobs_malformed_line(mock_run):
-    """Lines with fewer than 11 fields are silently skipped."""
+    """Lines with fewer than 12 fields are silently skipped."""
     mock_run("123|myjob|alice\n")
     assert slurm.fetch_jobs() == []
 
 
 def test_fetch_jobs_mixed_lines(mock_run):
     """Good lines are kept; malformed lines are skipped."""
-    good = "1|a|alice|RUNNING|gpu|1|4|0:01|8:00:00|None|node01"
+    good = "1|a|alice|RUNNING|gpu|1|4|0:01|8:00:00|None|node01|normal"
     bad  = "2|b|bob"
     mock_run(f"{good}\n{bad}\n")
     jobs = slurm.fetch_jobs()

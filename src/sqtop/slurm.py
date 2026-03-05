@@ -102,9 +102,9 @@ def fetch_jobs() -> list[Job]:
     jobs = []
     for line in out.strip().splitlines():
         parts = line.split("|")
-        if len(parts) < 11:
+        if len(parts) < 12:
             continue
-        qos_raw = parts[11] if len(parts) > 11 else ""
+        qos_raw = parts[11]
         qos = "" if qos_raw in ("N/A", "(null)") else qos_raw
         jobs.append(Job(
             job_id=parts[0],

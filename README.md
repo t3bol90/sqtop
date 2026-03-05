@@ -115,8 +115,7 @@ Attach behavior:
 | `1` | Jobs tab |
 | `2` | Nodes tab |
 | `3` | Partitions tab |
-| `Ctrl+P` | Command palette |
-| `S` | Command palette |
+| `Ctrl+P` / `S` | Command palette (refresh interval, default sort, expert mode, column visibility, …) |
 | `r` | Refresh all tabs |
 | `Shift+P` | Save screenshot to `~/.cache/sqtop/screenshots` |
 | `Shift+C` | Column visibility toggle for current tab |
@@ -141,7 +140,6 @@ Attach behavior:
 | `s` | Sort by state (toggle asc/desc) |
 | `t` | Sort by time |
 | `c` | Sort by CPUs |
-| `S` → "Jobs default sort" | Set persistent default sort (state priority / state / time / CPUs / QOS) |
 | `y` | Copy selected job ID |
 | `Shift+Y` | Copy current row |
 | `w` | Toggle watch on selected job |

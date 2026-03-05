@@ -208,7 +208,7 @@ class SqtopApp(App):
         config.save(self.theme, secs)
 
     def _set_jobs_default_sort(self, col: str) -> None:
-        label = next(lbl for key, lbl in _JOBS_SORT_OPTIONS if key == col)
+        label = next((lbl for key, lbl in _JOBS_SORT_OPTIONS if key == col), col)
         try:
             self.query_one(JobsView)._set_sort(col)
         except NoMatches:
