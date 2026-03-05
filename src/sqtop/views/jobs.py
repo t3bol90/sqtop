@@ -34,6 +34,7 @@ from .job_actions import JobActionScreen
 from .job_detail import JobDetailScreen
 from .job_info import JobInfoScreen
 from .array_tasks import ArrayTaskScreen
+from .batch_script import BatchScriptScreen
 from .log_viewer import LogViewerScreen, LOG_STDOUT, LOG_STDERR
 from .widgets import CyclicDataTable
 
@@ -892,6 +893,8 @@ class JobsView(BaseDataTableView[Job]):
             elif action == "detail":
                 data = fetch_job_detail(job.job_id)
                 self.app.push_screen(JobDetailScreen(job.job_id, data))
+            elif action == "batch_script":
+                self.app.push_screen(BatchScriptScreen(job.job_id))
             elif action == "cancel":
                 def execute_cancel() -> None:
                     result = run_job_action("cancel", job.job_id)

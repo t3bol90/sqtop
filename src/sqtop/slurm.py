@@ -257,6 +257,14 @@ def fetch_node_detail(node_name: str) -> dict[str, str]:
     return result
 
 
+def fetch_batch_script(job_id: str) -> str:
+    """Return the batch script for job_id, or an error message."""
+    out, ok, err = _run_result(f"scontrol write batch_script {shlex.quote(job_id)} -")
+    if not ok:
+        return f"(error: {err or 'permission denied or job not found'})"
+    return out or "(empty script)"
+
+
 def fetch_log_paths(job_id: str) -> tuple[str, str]:
     """Return (stdout_path, stderr_path) from scontrol show job."""
     detail = fetch_job_detail(job_id)
