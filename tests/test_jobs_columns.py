@@ -43,3 +43,21 @@ def test_jobs_columns_rebuild_with_data_after_empty_startup(monkeypatch, temp_co
     updated_name_width = dict(view._current_cols)["NAME"]
 
     assert updated_name_width > initial_name_width
+
+
+def test_jobs_columns_rebuild_after_empty_transition(monkeypatch, temp_config):
+    view = JobsView()
+    monkeypatch.setattr(view, "query_one", lambda *args, **kwargs: _FakeTable())
+
+    width = 200
+    view._rebuild_columns(width, [_job("short")], force=True)
+    first_name_width = dict(view._current_cols)["NAME"]
+
+    # Queue goes empty for a while.
+    view._rebuild_columns(width, [])
+
+    # New data appears with longer names at same width; should rebuild.
+    view._rebuild_columns(width, [_job("very-long-job-name-after-empty-transition")])
+    second_name_width = dict(view._current_cols)["NAME"]
+
+    assert second_name_width > first_name_width

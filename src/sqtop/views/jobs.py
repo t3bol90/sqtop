@@ -368,13 +368,16 @@ class JobsView(BaseDataTableView[Job]):
     def _rebuild_columns(self, width: int, jobs: list[Job], *, force: bool = False) -> None:
         visible = self._visible_cols_filtered(width)
         visible_names = [n for n, _ in visible]
+        has_jobs = bool(jobs)
         if (
             not force
             and width == self._rebuild_cache_width
             and visible_names == self._rebuild_cache_names
-            and (self._rebuild_cache_had_jobs or not jobs)
         ):
-            return
+            # Rebuild only on empty -> non-empty transitions at same width/layout.
+            if not (has_jobs and not self._rebuild_cache_had_jobs):
+                self._rebuild_cache_had_jobs = has_jobs
+                return
         new_cols: list[tuple[str, int]] = []
         for col_name, min_w in visible:
             if jobs:
@@ -390,7 +393,7 @@ class JobsView(BaseDataTableView[Job]):
 
         self._rebuild_cache_width = width
         self._rebuild_cache_names = visible_names
-        self._rebuild_cache_had_jobs = bool(jobs)
+        self._rebuild_cache_had_jobs = has_jobs
         if new_cols == self._current_cols:
             return
         self._current_cols = new_cols
