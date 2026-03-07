@@ -4,7 +4,8 @@ from __future__ import annotations
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import ModalScreen
-from textual.widgets import Label, RichLog, Static
+from textual.containers import Vertical
+from textual.widgets import Label, RichLog
 from textual import work
 
 from ..slurm import fetch_batch_script
@@ -30,9 +31,10 @@ class BatchScriptScreen(ModalScreen[None]):
     def __init__(self, job_id: str) -> None:
         super().__init__()
         self._job_id = job_id
+        self._script = ""
 
     def compose(self) -> ComposeResult:
-        with Static(id="batch-dialog"):
+        with Vertical(id="batch-dialog"):
             yield Label(
                 f"[b]batch script[/b]  job {self._job_id}  [dim]esc=close[/]",
                 id="batch-header",
@@ -40,7 +42,7 @@ class BatchScriptScreen(ModalScreen[None]):
             yield RichLog(id="batch-output", highlight=True, markup=False, wrap=False)
 
     def on_mount(self) -> None:
-        self.fetch_script()
+        self.call_after_refresh(self.fetch_script)
 
     @work(thread=True)
     def fetch_script(self) -> None:
@@ -48,6 +50,11 @@ class BatchScriptScreen(ModalScreen[None]):
         self.app.call_from_thread(self._display, content)
 
     def _display(self, content: str) -> None:
+        self._script = content
+        self.call_after_refresh(self._write)
+
+    def _write(self) -> None:
         log = self.query_one("#batch-output", RichLog)
         log.clear()
-        log.write(content)
+        log.write(self._script)
+        self.refresh(layout=True)
