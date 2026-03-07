@@ -267,7 +267,7 @@ class JobsView(BaseDataTableView[Job]):
         self._current_cols: list[tuple[str, int]] = []
         self._rebuild_cache_width: int = -1
         self._rebuild_cache_names: list[str] = []
-        self._rebuild_cache_longest: list[int] = []
+        self._rebuild_cache_had_jobs: bool = False
         self._filter_mine: bool = False
         self._filter_state: str = ""
         self._search_query: str = ""
@@ -368,7 +368,13 @@ class JobsView(BaseDataTableView[Job]):
     def _rebuild_columns(self, width: int, jobs: list[Job], *, force: bool = False) -> None:
         visible = self._visible_cols_filtered(width)
         visible_names = [n for n, _ in visible]
-        longest_per_col: list[int] = []
+        if (
+            not force
+            and width == self._rebuild_cache_width
+            and visible_names == self._rebuild_cache_names
+            and (self._rebuild_cache_had_jobs or not jobs)
+        ):
+            return
         new_cols: list[tuple[str, int]] = []
         for col_name, min_w in visible:
             if jobs:
@@ -378,20 +384,13 @@ class JobsView(BaseDataTableView[Job]):
                 )
             else:
                 longest = len(col_name)
-            longest_per_col.append(longest)
             max_w = self._col_max.get(col_name, max(min_w, longest + 1))
             col_width = max(min_w, min(longest + 1, max_w))
             new_cols.append((col_name, col_width))
 
-        if (not force
-                and width == self._rebuild_cache_width
-                and visible_names == self._rebuild_cache_names
-                and longest_per_col == self._rebuild_cache_longest):
-            return
-
         self._rebuild_cache_width = width
         self._rebuild_cache_names = visible_names
-        self._rebuild_cache_longest = longest_per_col
+        self._rebuild_cache_had_jobs = bool(jobs)
         if new_cols == self._current_cols:
             return
         self._current_cols = new_cols
