@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import shutil
 from collections.abc import Iterable
 from pathlib import Path
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.css.query import NoMatches
+from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import Footer, Header, TabbedContent, TabPane
 
@@ -19,6 +21,7 @@ from .views.column_toggle import ColumnToggleScreen
 from .views.keybindings_help import KeybindingHelpScreen
 from . import config, slurm
 from .clipboard import app_copy
+from .responsive import Tier, TIER_WIDTH, WidthChanged, tier_for
 
 # (sort_key, human-readable label) — order determines palette display order
 _JOBS_SORT_OPTIONS: list[tuple[str, str]] = [
@@ -53,6 +56,9 @@ class SqtopApp(App):
 
     TITLE = "sqtop"
 
+    # Responsive tier reactive — initialized from terminal size before first paint.
+    tier: reactive[Tier] = reactive("sm")
+
     def __init__(self) -> None:
         super().__init__()
         cfg = config.load()
@@ -62,6 +68,23 @@ class SqtopApp(App):
         self.expert_mode = bool(cfg.get("ui", {}).get("expert_mode", False))
         self.confirm_cancel_single = bool(cfg.get("safety", {}).get("confirm_cancel_single", True))
         self.confirm_bulk_actions = bool(cfg.get("safety", {}).get("confirm_bulk_actions", True))
+        # Synchronously read real terminal size before Textual mounts anything so
+        # first-paint uses the correct tier (spec §4.1).
+        size = shutil.get_terminal_size(fallback=(80, 24))
+        self._initial_width: int = size.columns
+        self._initial_height: int = size.lines
+        self.tier = tier_for(self._initial_width)
+
+    def watch_tier(self, old: str | None, new: str) -> None:
+        """Swap tier-* CSS class on self.screen when tier changes."""
+        try:
+            screen = self.screen
+        except Exception:
+            return
+        # Remove all existing tier classes.
+        for t in ("xs", "sm", "md", "lg"):
+            screen.remove_class(f"tier-{t}")
+        screen.add_class(f"tier-{new}")
 
     def watch_theme(self, theme: str) -> None:
         config.save(theme, self.interval)
@@ -72,7 +95,30 @@ class SqtopApp(App):
             self.sub_title = f"Slurm Dashboard — {slurm._SSH_HOST}"
         else:
             self.sub_title = "Slurm Dashboard"
+        # Ensure correct tier class is applied on first paint (spec §4.1).
+        for t in ("xs", "sm", "md", "lg"):
+            self.screen.remove_class(f"tier-{t}")
+        self.screen.add_class(f"tier-{self.tier}")
         self.call_after_refresh(self._focus_table_for_tab, "jobs")
+
+    def on_resize(self, event) -> None:
+        """Update tier and broadcast WidthChanged on every resize (spec §4.2)."""
+        width: int = event.size.width
+        height: int = event.size.height
+        new_tier = tier_for(width)
+        if new_tier != self.tier:
+            self.tier = new_tier  # triggers watch_tier for CSS class swap
+        # Always broadcast so views can recompute column budgets intra-tier.
+        self.post_message(WidthChanged(width, height, new_tier))
+
+    def push_screen(self, screen, callback=None, wait_for_dismiss: bool = False, **kwargs):
+        """Wrap push_screen to call responsive_clamp before mount (spec §5.5)."""
+        if hasattr(screen, "responsive_clamp"):
+            try:
+                screen.responsive_clamp(self.tier)
+            except Exception:
+                pass  # never let clamp failure block a modal
+        return super().push_screen(screen, callback, wait_for_dismiss=wait_for_dismiss, **kwargs)
 
     def compose(self) -> ComposeResult:
         yield Header()
