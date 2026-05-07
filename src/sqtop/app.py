@@ -111,6 +111,10 @@ class SqtopApp(App):
 
     def watch_tier(self, old: str | None, new: str) -> None:
         """Swap tier-* CSS class on self.screen when tier changes."""
+        try:
+            screen = self.screen
+        except Exception:
+            return
         for t in ("xs", "sm", "md", "lg"):
             screen.remove_class(f"tier-{t}")
         screen.add_class(f"tier-{new}")
