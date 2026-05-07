@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import os
 import shlex
-import subprocess
-import sys
 from datetime import datetime
 
 from textual import work
@@ -127,28 +125,6 @@ def _job_sort_key(job: Job) -> tuple:
     job_id = int(job.job_id) if job.job_id.isdigit() else 0
     return (priority, job_id)
 
-
-def _copy_to_clipboard(text: str) -> bool:
-    """Copy text to system clipboard. Returns True on success."""
-    try:
-        if sys.platform == "darwin":
-            subprocess.run(["pbcopy"], input=text.encode(), check=True, timeout=2)
-        elif sys.platform == "win32":
-            subprocess.run(["clip"], input=text.encode(), check=True, timeout=2)
-        else:
-            try:
-                subprocess.run(
-                    ["xclip", "-selection", "clipboard"],
-                    input=text.encode(), check=True, timeout=2,
-                )
-            except (FileNotFoundError, subprocess.CalledProcessError):
-                subprocess.run(
-                    ["xsel", "--clipboard", "--input"],
-                    input=text.encode(), check=True, timeout=2,
-                )
-        return True
-    except Exception:
-        return False
 
 
 STATE_COLORS = {
@@ -460,10 +436,8 @@ class JobsView(BaseDataTableView[Job]):
         if row_idx >= len(self._last_jobs):
             return
         job = self._last_jobs[row_idx]
-        if _copy_to_clipboard(job.job_id):
-            self.app.notify(f"Copied: {job.job_id}", title="Clipboard")
-        else:
-            self.app.notify("Clipboard unavailable", severity="warning")
+        from ..clipboard import app_copy
+        app_copy(self.app, job.job_id, label=f"Job {job.job_id}", count=1)
 
     def action_yank_row(self) -> None:
         row_idx = self.query_one(CyclicDataTable).cursor_row
@@ -471,10 +445,8 @@ class JobsView(BaseDataTableView[Job]):
             return
         job = self._last_jobs[row_idx]
         tsv = "\t".join(self._plain_cell(job, name) for name, _ in self._current_cols)
-        if _copy_to_clipboard(tsv):
-            self.app.notify(f"Copied row for job {job.job_id}", title="Clipboard")
-        else:
-            self.app.notify("Clipboard unavailable", severity="warning")
+        from ..clipboard import app_copy
+        app_copy(self.app, tsv, label=f"Row job {job.job_id}", count=1)
 
     def action_view_dependencies(self) -> None:
         if job := self._job_for_cursor():

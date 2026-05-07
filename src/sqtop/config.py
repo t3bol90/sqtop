@@ -55,6 +55,9 @@ _DEFAULTS: dict = {
     "remote": {
         "host": "",
     },
+    "clipboard": {
+        "transport": "auto",
+    },
 }
 
 
@@ -71,6 +74,7 @@ def _defaults() -> dict:
         "columns": {k: list(v) for k, v in _DEFAULTS["columns"].items()},
         "notifications": dict(_DEFAULTS["notifications"]),
         "remote": dict(_DEFAULTS["remote"]),
+        "clipboard": dict(_DEFAULTS["clipboard"]),
     }
 
 
@@ -86,7 +90,7 @@ def load() -> dict:
         with _CONFIG_FILE.open("rb") as f:
             data = tomllib.load(f)
         cfg = _defaults()
-        nested_keys = {"jobs", "attach", "ui", "safety", "health", "view_state", "columns", "notifications", "remote"}
+        nested_keys = {"jobs", "attach", "ui", "safety", "health", "view_state", "columns", "notifications", "remote", "clipboard"}
         cfg.update({k: v for k, v in data.items() if k not in nested_keys})
         jobs = dict(_DEFAULTS["jobs"])
         if isinstance(data.get("jobs"), dict):
@@ -126,6 +130,10 @@ def load() -> dict:
         if isinstance(data.get("remote"), dict):
             remote.update(data["remote"])
         cfg["remote"] = remote
+        clipboard = dict(_DEFAULTS["clipboard"])
+        if isinstance(data.get("clipboard"), dict):
+            clipboard.update(data["clipboard"])
+        cfg["clipboard"] = clipboard
         return cfg
     except Exception:
         return _defaults()
@@ -164,6 +172,7 @@ def _write(cfg: dict) -> None:
     columns = cfg.get("columns", {})
     notifications = cfg.get("notifications", {})
     remote = cfg.get("remote", {})
+    clipboard = cfg.get("clipboard", {})
 
     enabled = bool(attach.get("enabled", _DEFAULTS["attach"]["enabled"]))
     default_command = str(attach.get("default_command", _DEFAULTS["attach"]["default_command"]))
@@ -200,6 +209,7 @@ def _write(cfg: dict) -> None:
     desktop_enabled = bool(notifications.get("desktop_enabled", _DEFAULTS["notifications"]["desktop_enabled"]))
 
     remote_host = str(remote.get("host", _DEFAULTS["remote"]["host"]))
+    clipboard_transport = str(clipboard.get("transport", _DEFAULTS["clipboard"]["transport"]))
 
     _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     lines = [
@@ -253,6 +263,9 @@ def _write(cfg: dict) -> None:
         "",
         "[remote]",
         f'host = "{_toml_escape(remote_host)}"',
+        "",
+        "[clipboard]",
+        f'transport = "{_toml_escape(clipboard_transport)}"',
         "",
     ]
     _CONFIG_FILE.write_text("\n".join(lines), encoding="utf-8")
