@@ -55,6 +55,55 @@ If you run with this repo's local Docker-backed cluster shims, use:
 ./run.sh
 ```
 
+## Copying data
+
+### Quick reference
+
+| Key | Action |
+|---|---|
+| `y` | Copy job ID (Jobs) / yank visual selection |
+| `Y` | Copy current row as TSV (Jobs only) |
+| `v` | Enter visual selection mode (data tables) |
+| `V` | Enter visual-line mode (data tables) |
+| `Esc` | Exit visual mode |
+| `Ctrl+Shift+Y` | Copy entire pane as TSV (all views) |
+| `Ctrl+C` | Copy selection in text-pane modals |
+
+### Selection vs pane copy
+
+`y` / `Y` operate on the current row or a visual selection (`v` to start, move, then `y` to yank). `Ctrl+Shift+Y` copies the entire visible (post-filter, post-sort) table as TSV with a header row — useful for pasting into a spreadsheet or a Markdown table.
+
+### SSH + tmux
+
+sqtop uses **OSC 52** to copy: it writes an escape sequence to the TTY and the **local** terminal emulator on your laptop intercepts it and writes to the local clipboard. No `xclip` on the server, no X forwarding required.
+
+If your session goes through **tmux** (very common: `ssh login01`, then `tmux attach`), tmux drops OSC 52 by default. Add to your **remote** `~/.tmux.conf`:
+
+```tmux
+set -g set-clipboard on
+set -g allow-passthrough on   # tmux 3.3+
+```
+
+Verify it works end-to-end:
+
+```bash
+printf '\e]52;c;%s\a' "$(printf 'sqtop test' | base64)"
+```
+
+If your local clipboard now contains `sqtop test`, OSC 52 is working.
+
+**Terminal support:** iTerm2, Kitty, WezTerm, Alacritty, Ghostty, GNOME Terminal (VTE ≥ 0.50), Windows Terminal — all work out of the box. **Terminal.app does not support OSC 52**; switch to one of the above when running over SSH.
+
+**Mosh:** OSC 52 requires mosh ≥ 1.4.
+
+### Size limit
+
+Payloads over ~74 KB are truncated; a warning notification will say so. The full payload goes through if you configure `set-clipboard on` in tmux and your terminal has no cap (WezTerm, Kitty).
+
+### Local fallback
+
+When running locally (not over SSH) and OSC 52 fails silently, sqtop falls back to `pbcopy` (macOS) / `xclip` / `xsel` / `clip` (Windows) if available.
+
 ## Config
 
 Config file path:

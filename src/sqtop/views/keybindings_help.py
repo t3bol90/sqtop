@@ -77,7 +77,18 @@ class KeybindingHelpScreen(ModalScreen[None]):
             yield Label(f"Keybindings — {self._pane_name} pane", id="keys-title")
             yield RichLog(id="keys-output", highlight=True, markup=True)
 
-    def on_mount(self) -> None:
+    _CLIPBOARD_BINDINGS: list[tuple[str, str]] = [
+    ("y", "Copy job ID (Jobs) / Yank visual selection"),
+    ("Y", "Copy current row as TSV (Jobs only)"),
+    ("v", "Enter visual selection mode (data tables)"),
+    ("V", "Enter visual-line mode (data tables)"),
+    ("Esc", "Exit visual mode"),
+    ("Ctrl+Shift+Y", "Copy entire pane as TSV"),
+    ("Ctrl+C", "Copy selection (text-pane modals)"),
+]
+
+
+def on_mount(self) -> None:
         log = self.query_one("#keys-output", RichLog)
         log.write("[b]Global[/b]")
         for key, desc in format_bindings(self._global_bindings):
@@ -90,5 +101,9 @@ class KeybindingHelpScreen(ModalScreen[None]):
                 log.write(f"  [cyan]{key:<12}[/] {desc}")
         else:
             log.write("  [dim]Pane keybindings are still loading...[/]")
+        log.write("")
+        log.write("[b]Clipboard[/b]")
+        for key, desc in _CLIPBOARD_BINDINGS:
+            log.write(f"  [cyan]{key:<12}[/] {desc}")
         log.write("")
         log.write("[dim]Press Esc, q, or ? to close[/]")
