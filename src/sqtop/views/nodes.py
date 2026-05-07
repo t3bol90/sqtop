@@ -91,6 +91,10 @@ class NodesView(BaseDataTableView[Node]):
         Binding("s", "sort_state", show=False),
         Binding("p", "sort_cpu", show=False),
         Binding("m", "sort_mem", show=False),
+        Binding("v", "visual_enter", "Visual", show=False),
+        Binding("V", "visual_enter", "Visual", show=False),
+        Binding("escape", "visual_exit", "Exit visual", show=False),
+        Binding("y", "yank", "Copy", show=False),
     ]
 
     def __init__(self, interval: float = 2.0, start_offset: float = 0.0) -> None:
@@ -186,6 +190,11 @@ class NodesView(BaseDataTableView[Node]):
     def action_sort_mem(self) -> None:
         self._set_sort("mem")
 
+    def action_yank(self) -> None:
+        """Visual yank when in visual mode; no-op otherwise."""
+        if self._visual_active:
+            self.action_visual_yank()
+
     def _sorted_visible(self, nodes: list[Node]) -> list[Node]:
         visible = [n for n in nodes if n.name]
         if self._sort_col == "state":
@@ -242,14 +251,16 @@ class NodesView(BaseDataTableView[Node]):
     def _render_rows(self, sorted_rows: list[Node] | None = None) -> None:
         rows = sorted_rows if sorted_rows is not None else self._sorted_visible(self._last_nodes)
         table = self.query_one(CyclicDataTable)
+        visual_set = self.visual_rows()
         table.clear()
-        for node in rows:
+        for idx, node in enumerate(rows):
             state_lower = node.state.lower().split("*")[0].rstrip("-")
             color = STATE_COLORS.get(state_lower, "white")
             row = []
+            visual_prefix = "» " if idx in visual_set else ""
             for name, _ in self._current_cols:
                 if name == "NODE":
-                    row.append(f"[bold]{node.name}[/bold]")
+                    row.append(f"[bold]{visual_prefix}{node.name}[/bold]")
                 elif name == "STATE":
                     row.append(f"[{color}]{node.state}[/]")
                 elif name == "CPU%":

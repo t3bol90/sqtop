@@ -7,13 +7,17 @@ from typing import Generic, TypeVar
 from textual import work
 from textual.widgets import Static
 
+from .mixins import VisualSelectMixin
+
 T = TypeVar("T")
 
 
-class BaseDataTableView(Static, Generic[T]):
-    """Shared refresh loop, sort toggle, and cursor/scroll preservation for data-table views.
+class BaseDataTableView(VisualSelectMixin, Static, Generic[T]):
+    """Shared refresh loop, sort toggle, cursor/scroll preservation, and visual
+    selection mode for data-table views.
 
-    Subclasses must implement _fetch_data(), _get_anchor_key(), and _update_table().
+    Subclasses must implement _fetch_data(), _get_anchor_key(), _update_table(),
+    _current_items(), and _row_tsv().
     """
 
     def __init__(self, interval: float = 2.0, start_offset: float = 0.0) -> None:

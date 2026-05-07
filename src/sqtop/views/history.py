@@ -83,6 +83,10 @@ class HistoryView(BaseDataTableView[SacctJob]):
     BINDINGS = [
         Binding("enter", "open_job", "Open", show=True),
         Binding("u", "toggle_mine", "My jobs", show=False),
+        Binding("v", "visual_enter", "Visual", show=False),
+        Binding("V", "visual_enter", "Visual", show=False),
+        Binding("escape", "visual_exit", "Exit visual", show=False),
+        Binding("y", "yank", "Copy", show=False),
     ]
 
     def __init__(self, interval: float = 30.0, start_offset: float = 0.0, hours: int = _DEFAULT_HOURS) -> None:
@@ -122,6 +126,11 @@ class HistoryView(BaseDataTableView[SacctJob]):
     def action_toggle_mine(self) -> None:
         self._filter_mine = not self._filter_mine
         self._update_table(self._last_jobs_raw)
+
+    def action_yank(self) -> None:
+        """Visual yank when in visual mode; no-op otherwise."""
+        if self._visual_active:
+            self.action_visual_yank()
 
     def action_open_job(self) -> None:
         job = self._job_for_cursor()
@@ -202,12 +211,14 @@ class HistoryView(BaseDataTableView[SacctJob]):
 
     def _render_rows(self, jobs: list[SacctJob]) -> None:
         table = self.query_one(CyclicDataTable)
+        visual_set = self.visual_rows()
         table.clear()
-        for job in jobs:
+        for idx, job in enumerate(jobs):
             state_color = self._state_color(job.state)
             exit_color = self._exit_color(job.exit_code)
+            visual_prefix = "» " if idx in visual_set else ""
             table.add_row(
-                job.job_id,
+                f"{visual_prefix}{job.job_id}",
                 job.name,
                 job.user,
                 f"[{state_color}]{job.state}[/]",

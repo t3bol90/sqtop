@@ -224,8 +224,11 @@ class JobsView(BaseDataTableView[Job]):
         Binding("s", "sort_state", show=False),
         Binding("t", "sort_time", show=False),
         Binding("c", "sort_cpus", show=False),
-        Binding("y", "yank_job_id", "Copy ID", show=False),
+        Binding("y", "yank", "Copy", show=False),
         Binding("Y", "yank_row", "Copy row", show=False),
+        Binding("v", "visual_enter", "Visual", show=False),
+        Binding("V", "visual_enter", "Visual", show=False),
+        Binding("escape", "escape_or_visual_exit", "Exit", show=False),
         Binding("w", "watch_job", "Watch", show=True),
         Binding("D", "view_dependencies", "Deps", show=False),
         Binding("f", "cycle_state_filter", "Filter", show=True),
@@ -441,7 +444,14 @@ class JobsView(BaseDataTableView[Job]):
     def action_sort_cpus(self) -> None:
         self._set_sort("cpus")
 
-    def action_yank_job_id(self) -> None:
+    def action_yank(self) -> None:
+        """Dispatch: visual yank when in visual mode, otherwise yank job id."""
+        if self._visual_active:
+            self.action_visual_yank()
+        else:
+            self._do_yank_job_id()
+
+    def _do_yank_job_id(self) -> None:
         table = self.query_one(CyclicDataTable)
         row_idx = table.cursor_row
         if row_idx >= len(self._last_jobs):
@@ -458,6 +468,15 @@ class JobsView(BaseDataTableView[Job]):
         tsv = "\t".join(self._plain_cell(job, name) for name, _ in self._current_cols)
         from ..clipboard import app_copy
         app_copy(self.app, tsv, label=f"Row job {job.job_id}", count=1)
+
+    def action_escape_or_visual_exit(self) -> None:
+        """Exit visual mode if active; otherwise fall through to search dismiss."""
+        if self._visual_active:
+            self.action_visual_exit()
+        else:
+            bar = self.query_one("#search-bar", Input)
+            if bar.display:
+                self._dismiss_search()
 
     def action_view_dependencies(self) -> None:
         if job := self._job_for_cursor():
@@ -632,11 +651,8 @@ class JobsView(BaseDataTableView[Job]):
             self._dismiss_search()
 
     def on_key(self, event) -> None:
-        if event.key == "escape":
-            bar = self.query_one("#search-bar", Input)
-            if bar.display:
-                self._dismiss_search()
-                event.stop()
+        # escape is handled via action_escape_or_visual_exit binding
+        pass
 
     def _dismiss_search(self) -> None:
         bar = self.query_one("#search-bar", Input)
@@ -834,16 +850,18 @@ class JobsView(BaseDataTableView[Job]):
     def _render_rows(self, jobs: list[Job]) -> None:
         table = self.query_one(CyclicDataTable)
         saved_row = table.cursor_row
+        visual_set = self.visual_rows()
         table.clear()
-        for job in jobs:
+        for idx, job in enumerate(jobs):
             color = STATE_COLORS.get(job.state, "white")
             watched_prefix = "★ " if job.job_id in self._watched_states else ""
             selected_prefix = "✓ " if job.job_id in self._selected_job_ids else ""
+            visual_prefix = "» " if idx in visual_set else ""
             row = []
             for name, _ in self._current_cols:
                 if name == "JOBID":
                     row.append(
-                        f"[{color}]{selected_prefix}{watched_prefix}{self._cell_text(job, name)}[/]"
+                        f"[{color}]{selected_prefix}{visual_prefix}{watched_prefix}{self._cell_text(job, name)}[/]"
                     )
                 elif name == "NAME":
                     row.append(f"[{color}]{self._cell_text(job, name)}[/]")

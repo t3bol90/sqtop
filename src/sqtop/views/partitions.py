@@ -46,6 +46,10 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
     BINDINGS = [
         Binding("s", "sort_partition", show=False),
         Binding("n", "sort_nodes", show=False),
+        Binding("v", "visual_enter", "Visual", show=False),
+        Binding("V", "visual_enter", "Visual", show=False),
+        Binding("escape", "visual_exit", "Exit visual", show=False),
+        Binding("y", "yank", "Copy", show=False),
     ]
 
     def __init__(self, interval: float = 5.0, start_offset: float = 0.0) -> None:
@@ -101,6 +105,11 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
 
     def action_sort_nodes(self) -> None:
         self._set_sort("nodes")
+
+    def action_yank(self) -> None:
+        """Visual yank when in visual mode; no-op otherwise."""
+        if self._visual_active:
+            self.action_visual_yank()
 
     def _update_table(self, summaries: list[ClusterSummary]) -> None:
         self._last_summaries = summaries
@@ -215,8 +224,16 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
     def _render_rows(self, sorted_rows: list[ClusterSummary]) -> None:
         visible = self._visible_cols_filtered()
         table = self.query_one(CyclicDataTable)
+        visual_set = self.visual_rows()
         table.clear()
-        for s in sorted_rows:
-            table.add_row(*[self._cell_for_col(s, name) for name, _ in visible])
+        for idx, s in enumerate(sorted_rows):
+            visual_prefix = "» " if idx in visual_set else ""
+            row = []
+            for name, _ in visible:
+                cell = self._cell_for_col(s, name)
+                if name == "PARTITION":
+                    cell = f"[bold]{visual_prefix}{s.partition}[/bold]"
+                row.append(cell)
+            table.add_row(*row)
         if sorted_rows and table.cursor_row < 0:
             table.move_cursor(row=0)
