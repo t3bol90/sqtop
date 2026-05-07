@@ -15,6 +15,14 @@ from .mixins import ModalButtonNavMixin
 from ..slurm import SacctJob, fetch_log_paths, fetch_sacct_jobs
 from .log_viewer import LogViewerScreen, LOG_STDOUT, LOG_STDERR
 from .widgets import CyclicDataTable
+from ..responsive import (
+    ColumnSpec,
+    CHROME_OVERHEAD,
+    allocate_columns,
+    tier_for,
+    truncate_cell,
+    WidthChanged,
+)
 
 STATE_COLORS: dict[str, str] = {
     "COMPLETED": "dim",
@@ -23,14 +31,15 @@ STATE_COLORS: dict[str, str] = {
     "TIMEOUT": "magenta",
 }
 
-COLUMNS: list[tuple[str, int]] = [
-    ("JOBID",     8),
-    ("NAME",     12),
-    ("USER",      8),
-    ("STATE",    12),
-    ("ELAPSED",  10),
-    ("EXIT",      6),
-    ("PARTITION", 10),
+# ColumnSpec(name, min_width, content_max, priority, min_tier)
+COLUMNS: list[ColumnSpec] = [
+    ColumnSpec("JOBID",      8, 12, 100, "xs"),
+    ColumnSpec("STATE",     12, 16,  95, "xs"),
+    ColumnSpec("ELAPSED",   10, 12,  90, "xs"),
+    ColumnSpec("NAME",      12, 24,  80, "sm"),
+    ColumnSpec("USER",       8, 12,  75, "sm"),
+    ColumnSpec("EXIT",       6,  8,  70, "sm"),
+    ColumnSpec("PARTITION", 10, 14,  60, "md"),
 ]
 
 _DEFAULT_HOURS = 24
@@ -95,19 +104,51 @@ class HistoryView(BaseDataTableView[SacctJob]):
         self._last_jobs_raw: list[SacctJob] = []
         self._last_jobs: list[SacctJob] = []
         self._filter_mine: bool = False
+        self._current_cols: list[tuple[str, int]] = []
+        self._rebuild_cache_width: int = -1
+        self._rebuild_cache_names: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield Label("", id="history-header")
         yield CyclicDataTable(id="history-table", cursor_type="row", zebra_stripes=True)
 
-    def _build_columns(self) -> None:
+    def _build_columns(self, width: int | None = None, *, force: bool = False) -> bool:
+        """Build/rebuild column layout using budget allocation. Returns True if changed."""
+        w = width if width is not None else (self._rebuild_cache_width if self._rebuild_cache_width > 0 else 80)
+        budget = max(0, w - CHROME_OVERHEAD)
+        new_cols = allocate_columns(budget, list(COLUMNS), current_tier=tier_for(w))
+        visible_names = [n for n, _ in new_cols]
+
+        if (
+            not force
+            and w == self._rebuild_cache_width
+            and visible_names == self._rebuild_cache_names
+        ):
+            return False
+
+        self._rebuild_cache_width = w
+        self._rebuild_cache_names = visible_names
+
+        if new_cols == self._current_cols:
+            return False
+
+        self._current_cols = new_cols
         table = self.query_one(CyclicDataTable)
         table.clear(columns=True)
-        for name, width in COLUMNS:
-            table.add_column(name, width=width)
+        for name, col_width in self._current_cols:
+            table.add_column(name, width=col_width)
+        return True
+
+    def on_width_changed(self, event: WidthChanged) -> None:
+        """Recompute column budget on every resize (spec §4.2)."""
+        state = self._capture_table_state()
+        changed = self._build_columns(event.width)
+        if changed and self._last_jobs:
+            self._render_rows(self._last_jobs)
+            self._restore_table_state(state, self._last_jobs)
 
     def on_mount(self) -> None:
-        self._build_columns()
+        self._build_columns(force=True)
         self.start_refresh_loop()
 
     def _fetch_data(self) -> list[SacctJob]:
@@ -212,20 +253,26 @@ class HistoryView(BaseDataTableView[SacctJob]):
     def _render_rows(self, jobs: list[SacctJob]) -> None:
         table = self.query_one(CyclicDataTable)
         visual_set = self.visual_rows()
+        col_widths = dict(self._current_cols)
         table.clear()
         for idx, job in enumerate(jobs):
             state_color = self._state_color(job.state)
             exit_color = self._exit_color(job.exit_code)
             visual_prefix = "» " if idx in visual_set else ""
-            table.add_row(
-                f"{visual_prefix}{job.job_id}",
-                job.name,
-                job.user,
-                f"[{state_color}]{job.state}[/]",
-                job.elapsed,
-                f"[{exit_color}]{job.exit_code}[/]",
-                job.partition,
-            )
+            row = []
+            for name, w in self._current_cols:
+                plain = self._plain_cell(job, name)
+                cell = truncate_cell(plain, w)
+                if name == "JOBID":
+                    row.append(f"{visual_prefix}{cell}")
+                elif name == "STATE":
+                    row.append(f"[{state_color}]{cell}[/]")
+                elif name == "EXIT":
+                    exit_color = self._exit_color(job.exit_code)
+                    row.append(f"[{exit_color}]{cell}[/]")
+                else:
+                    row.append(cell)
+            table.add_row(*row)
         if jobs and table.cursor_row < 0:
             table.move_cursor(row=0)
 
@@ -255,11 +302,13 @@ class HistoryView(BaseDataTableView[SacctJob]):
         return ""
 
     def _row_tsv(self, item: SacctJob) -> str:
-        return "\t".join(self._plain_cell(item, name) for name, _ in COLUMNS)
+        cols = self._current_cols if self._current_cols else [(col.name, col.min_width) for col in COLUMNS]
+        return "\t".join(self._plain_cell(item, name) for name, _ in cols)
 
     def copy_pane(self) -> tuple[str, str, int]:
         """Return (label, tsv_payload, row_count) for the history pane."""
-        header = "\t".join(name for name, _ in COLUMNS)
+        cols = self._current_cols if self._current_cols else [(col.name, col.min_width) for col in COLUMNS]
+        header = "\t".join(name for name, _ in cols)
         items = self._current_items()
         rows = [self._row_tsv(item) for item in items]
         payload = "\n".join([header, *rows]) + "\n"

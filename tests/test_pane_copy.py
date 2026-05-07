@@ -228,9 +228,9 @@ class _FakePartitionsView:
         self._last_sorted_rows = summaries
 
     def _visible_cols_filtered(self):
-        # Use all COLUMNS
+        # Return (name, width) tuples from ColumnSpec list.
         from sqtop.views.partitions import COLUMNS
-        return list(COLUMNS)
+        return [(col.name, col.min_width) for col in COLUMNS]
 
     def _plain_cell(self, s: ClusterSummary, name: str) -> str:
         if name == "PARTITION":
@@ -306,11 +306,11 @@ class _FakeHistoryView:
 
     def _row_tsv(self, item):
         from sqtop.views.history import COLUMNS
-        return "\t".join(self._plain_cell(item, name) for name, _ in COLUMNS)
+        return "\t".join(self._plain_cell(item, col.name) for col in COLUMNS)
 
     def copy_pane(self):
         from sqtop.views.history import COLUMNS
-        header = "\t".join(name for name, _ in COLUMNS)
+        header = "\t".join(col.name for col in COLUMNS)
         items = self._current_items()
         rows = [self._row_tsv(item) for item in items]
         payload = "\n".join([header, *rows]) + "\n"

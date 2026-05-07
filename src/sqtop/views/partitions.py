@@ -12,6 +12,14 @@ from .base import BaseDataTableView
 from ..slurm import ClusterSummary, fetch_cluster_summary
 from .widgets import CyclicDataTable
 from .. import config
+from ..responsive import (
+    ColumnSpec,
+    CHROME_OVERHEAD,
+    allocate_columns,
+    tier_for,
+    truncate_cell,
+    WidthChanged,
+)
 
 AVAIL_COLORS = {
     "up":   "green",
@@ -30,13 +38,14 @@ STATE_COLORS = {
     "unknown":   "dim",
 }
 
-COLUMNS: list[tuple[str, int]] = [
-    ("PARTITION",  14),
-    ("AVAIL",       7),
-    ("TIMELIMIT",  12),
-    ("NODES",       7),
-    ("STATE",      12),
-    ("NODELIST",   30),
+# ColumnSpec(name, min_width, content_max, priority, min_tier)
+COLUMNS: list[ColumnSpec] = [
+    ColumnSpec("PARTITION",  14, 20, 100, "xs"),
+    ColumnSpec("AVAIL",       7,  8,  90, "xs"),
+    ColumnSpec("STATE",      12, 16,  85, "xs"),
+    ColumnSpec("TIMELIMIT",  12, 16,  70, "sm"),
+    ColumnSpec("NODES",       7,  8,  65, "sm"),
+    ColumnSpec("NODELIST",   30, 40,  30, "md"),
 ]
 
 
@@ -57,6 +66,9 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
         self._last_summaries: list[ClusterSummary] = []
         self._last_sorted_rows: list[ClusterSummary] = []
         self._last_render_fp: tuple = ()
+        self._current_cols: list[tuple[str, int]] = []
+        self._rebuild_cache_width: int = -1
+        self._rebuild_cache_names: list[str] = []
         cfg_all = config.load()
         view_state = cfg_all.get("view_state", {})
         saved_sort = str(view_state.get("partitions_sort_col", ""))
@@ -69,23 +81,55 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
         yield Label("", id="partitions-header")
         yield CyclicDataTable(id="partitions-table", cursor_type="row", zebra_stripes=True)
 
-    def _visible_cols_filtered(self) -> list[tuple[str, int]]:
-        return [(name, w) for name, w in COLUMNS if name not in self._hidden_cols]
+    def _visible_cols_filtered(self, width: int | None = None) -> list[tuple[str, int]]:
+        """Return budget-allocated columns. width defaults to cached or 80."""
+        w = width if width is not None else (self._rebuild_cache_width if self._rebuild_cache_width > 0 else 80)
+        budget = max(0, w - CHROME_OVERHEAD)
+        cols = [col for col in COLUMNS if col.name not in self._hidden_cols]
+        return allocate_columns(budget, cols, current_tier=tier_for(w))
 
-    def _rebuild_columns(self) -> None:
+    def _rebuild_columns(self, width: int | None = None, *, force: bool = False) -> bool:
+        """Rebuild using budget allocation. Returns True if layout changed."""
+        w = width if width is not None else (self._rebuild_cache_width if self._rebuild_cache_width > 0 else 80)
+        new_cols = self._visible_cols_filtered(w)
+        visible_names = [n for n, _ in new_cols]
+
+        if (
+            not force
+            and w == self._rebuild_cache_width
+            and visible_names == self._rebuild_cache_names
+        ):
+            return False
+
+        self._rebuild_cache_width = w
+        self._rebuild_cache_names = visible_names
+
+        if new_cols == self._current_cols:
+            return False
+
+        self._current_cols = new_cols
         table = self.query_one(CyclicDataTable)
         table.clear(columns=True)
-        for name, width in self._visible_cols_filtered():
-            table.add_column(name, width=width)
+        for name, col_width in self._current_cols:
+            table.add_column(name, width=col_width)
+        return True
+
+    def on_width_changed(self, event: WidthChanged) -> None:
+        """Recompute column budget on every resize (spec §4.2)."""
+        state = self._capture_table_state()
+        changed = self._rebuild_columns(event.width)
+        if changed and self._last_sorted_rows:
+            self._render_rows(self._last_sorted_rows)
+            self._restore_table_state(state, self._last_sorted_rows)
 
     def _reload_column_visibility(self) -> None:
         cfg = config.load()
         self._hidden_cols = set(cfg.get("columns", {}).get("partitions_hidden", []))
-        self._rebuild_columns()
+        self._rebuild_columns(self._rebuild_cache_width if self._rebuild_cache_width > 0 else None, force=True)
         self._render_rows(self._last_sorted_rows)
 
     def on_mount(self) -> None:
-        self._rebuild_columns()
+        self._rebuild_columns(force=True)
         self.start_refresh_loop()
 
     def _fetch_data(self) -> list[ClusterSummary]:
@@ -170,21 +214,23 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
         table.move_cursor(row=row)
         table.scroll_to(y=scroll_y, animate=False)
 
-    def _cell_for_col(self, s: ClusterSummary, name: str) -> str:
+    def _cell_for_col(self, s: ClusterSummary, name: str, width: int | None = None) -> str:
         avail_color = AVAIL_COLORS.get(s.avail.lower(), "white")
         state_lower = s.state.lower().split("*")[0].rstrip("-")
         state_color = STATE_COLORS.get(state_lower, "white")
+        plain = self._plain_cell(s, name)
+        text = truncate_cell(plain, width) if width is not None else plain
         if name == "PARTITION":
-            return f"[bold]{s.partition}[/bold]"
+            return f"[bold]{text}[/bold]"
         if name == "AVAIL":
-            return f"[{avail_color}]{s.avail}[/]"
+            return f"[{avail_color}]{text}[/]"
         if name == "TIMELIMIT":
-            return s.timelimit
+            return text
         if name == "NODES":
-            return s.nodes
+            return text
         if name == "STATE":
-            return f"[{state_color}]{s.state}[/]"
-        return s.nodelist
+            return f"[{state_color}]{text}[/]"
+        return text
 
     def _plain_cell(self, s: ClusterSummary, name: str) -> str:
         """Return plain (markup-free) cell text for a partition column."""
@@ -209,30 +255,28 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
         return list(self._last_sorted_rows)
 
     def _row_tsv(self, item: ClusterSummary) -> str:
-        visible = self._visible_cols_filtered()
-        return "\t".join(self._plain_cell(item, name) for name, _ in visible)
+        return "\t".join(self._plain_cell(item, name) for name, _ in self._current_cols)
 
     def copy_pane(self) -> tuple[str, str, int]:
         """Return (label, tsv_payload, row_count) for the partitions pane."""
-        visible = self._visible_cols_filtered()
-        header = "\t".join(name for name, _ in visible)
+        header = "\t".join(name for name, _ in self._current_cols)
         items = self._current_items()
         rows = [self._row_tsv(item) for item in items]
         payload = "\n".join([header, *rows]) + "\n"
         return self._pane_label(), payload, len(rows)
 
     def _render_rows(self, sorted_rows: list[ClusterSummary]) -> None:
-        visible = self._visible_cols_filtered()
         table = self.query_one(CyclicDataTable)
         visual_set = self.visual_rows()
         table.clear()
         for idx, s in enumerate(sorted_rows):
             visual_prefix = "» " if idx in visual_set else ""
             row = []
-            for name, _ in visible:
-                cell = self._cell_for_col(s, name)
+            for name, w in self._current_cols:
+                cell = self._cell_for_col(s, name, w)
                 if name == "PARTITION":
-                    cell = f"[bold]{visual_prefix}{s.partition}[/bold]"
+                    plain = truncate_cell(s.partition, w)
+                    cell = f"[bold]{visual_prefix}{plain}[/bold]"
                 row.append(cell)
             table.add_row(*row)
         if sorted_rows and table.cursor_row < 0:

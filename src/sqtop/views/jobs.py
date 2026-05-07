@@ -24,6 +24,14 @@ from ..slurm import (
     run_attach_command,
 )
 from .. import config
+from ..responsive import (
+    ColumnSpec,
+    CHROME_OVERHEAD,
+    allocate_columns,
+    tier_for,
+    truncate_cell,
+    WidthChanged,
+)
 from .base import BaseDataTableView
 from .attach_prompt import AttachNodePromptScreen
 from .bulk_actions import BulkActionScreen
@@ -146,28 +154,20 @@ _SORT_KEYS = {
     "qos":    lambda j: (j.qos.lower(), _job_sort_key(j)),
 }
 
-# (header, min_col_width, min_terminal_width_to_show)
-COLUMNS: list[tuple[str, int, int]] = [
-    ("JOBID",              8,   0),
-    ("NAME",               8,   0),
-    ("STATE",             10,   0),
-    ("USER",               8,  65),
-    ("TIME",              10,  65),
-    ("TIME_LEFT",         10,  65),
-    ("PARTITION",          9,  90),
-    ("QOS",                8,  90),
-    ("NODES",              6,  90),
-    ("CPUS",               6, 105),
-    ("TIME_LIMIT",        10, 105),
-    ("NODELIST(REASON)",  14, 120),
-]
-
+# Default content_max widths for each column.
 _DEFAULT_COL_MAX = {
-    "NAME": 24,
-    "USER": 12,
-    "PARTITION": 14,
-    "QOS": 12,
-    "NODELIST(REASON)": 40,
+    "JOBID":             12,
+    "NAME":              24,
+    "STATE":             14,
+    "USER":              12,
+    "TIME":              12,
+    "TIME_LEFT":         12,
+    "PARTITION":         14,
+    "QOS":               12,
+    "NODES":              8,
+    "CPUS":               8,
+    "TIME_LIMIT":        12,
+    "NODELIST(REASON)":  40,
 }
 
 _CONFIG_COL_KEYS = {
@@ -178,17 +178,22 @@ _CONFIG_COL_KEYS = {
     "NODELIST(REASON)": "nodelist_reason_max",
 }
 
-
-def _visible_cols(width: int) -> list[tuple[str, int]]:
-    return [(name, min_w) for name, min_w, min_term_w in COLUMNS if min_term_w <= width]
-
-
-def _truncate(text: str, max_len: int | None) -> str:
-    if max_len is None or max_len <= 0 or len(text) <= max_len:
-        return text
-    if max_len <= 3:
-        return text[:max_len]
-    return text[: max_len - 3] + "..."
+# ColumnSpec(name, min_width, content_max, priority, min_tier)
+# content_max will be overridden at runtime from config via _make_columns().
+COLUMNS: list[ColumnSpec] = [
+    ColumnSpec("JOBID",             8,  12, 100, "xs"),
+    ColumnSpec("STATE",            10,  14,  95, "xs"),
+    ColumnSpec("NAME",              8,  24,  90, "xs"),
+    ColumnSpec("USER",              8,  12,  80, "sm"),
+    ColumnSpec("TIME",             10,  12,  75, "sm"),
+    ColumnSpec("TIME_LEFT",        10,  12,  70, "sm"),
+    ColumnSpec("PARTITION",         9,  14,  60, "md"),
+    ColumnSpec("NODES",             6,   8,  55, "md"),
+    ColumnSpec("CPUS",              6,   8,  50, "md"),
+    ColumnSpec("QOS",               8,  12,  45, "md"),
+    ColumnSpec("TIME_LIMIT",       10,  12,  40, "md"),
+    ColumnSpec("NODELIST(REASON)", 14,  40,  30, "lg"),
+]
 
 
 def _coerce_positive_int(value: object, default: int) -> int:
@@ -247,6 +252,7 @@ class JobsView(BaseDataTableView[Job]):
         self._rebuild_cache_width: int = -1
         self._rebuild_cache_names: list[str] = []
         self._rebuild_cache_had_jobs: bool = False
+        self._rebuild_cache_tier: str = ""
         self._filter_mine: bool = False
         self._filter_state: str = ""
         self._search_query: str = ""
@@ -303,10 +309,19 @@ class JobsView(BaseDataTableView[Job]):
         return item.job_id
 
     def on_resize(self, event) -> None:
+        # Handled via WidthChanged broadcast from app; also keep local fallback.
         state = self._capture_table_state()
         self._rebuild_columns(event.size.width, self._last_jobs, force=True)
         self._render_rows(self._last_jobs)
         self._restore_table_state(state, self._last_jobs)
+
+    def on_width_changed(self, event: WidthChanged) -> None:
+        """Recompute column budget on every resize (spec §4.2)."""
+        state = self._capture_table_state()
+        self._rebuild_columns(event.width, self._last_jobs)
+        if self._last_jobs:
+            self._render_rows(self._last_jobs)
+            self._restore_table_state(state, self._last_jobs)
 
     def _plain_cell(self, job: Job, col_name: str) -> str:
         if col_name == "JOBID":
@@ -334,8 +349,15 @@ class JobsView(BaseDataTableView[Job]):
             return job.time_limit
         return job.nodelist or job.reason
 
-    def _cell_text(self, job: Job, col_name: str) -> str:
-        return _truncate(self._plain_cell(job, col_name), self._col_max.get(col_name))
+    def _cell_text(self, job: Job, col_name: str, col_width: int | None = None) -> str:
+        text = self._plain_cell(job, col_name)
+        # Truncate to assigned column width if provided, else fall back to col_max.
+        if col_width is not None:
+            return truncate_cell(text, col_width)
+        max_len = self._col_max.get(col_name)
+        if max_len is None:
+            return text
+        return truncate_cell(text, max_len)
 
     # ── Copy-pane interface ───────────────────────────────────────────────────
 
@@ -348,42 +370,69 @@ class JobsView(BaseDataTableView[Job]):
     def _row_tsv(self, item: Job) -> str:
         return "\t".join(self._plain_cell(item, name) for name, _ in self._current_cols)
 
-    def _visible_cols_filtered(self, width: int) -> list[tuple[str, int]]:
+    def _make_columns(self) -> list[ColumnSpec]:
+        """Build ColumnSpec list with config-overridden content_max values."""
         return [
-            (name, min_w)
-            for name, min_w, min_term_w in COLUMNS
-            if min_term_w <= width and name not in self._hidden_cols
+            ColumnSpec(
+                col.name,
+                col.min_width,
+                self._col_max.get(col.name, col.content_max),
+                col.priority,
+                col.min_tier,
+            )
+            for col in COLUMNS
+            if col.name not in self._hidden_cols
         ]
 
+    def _visible_cols_filtered(self, width: int) -> list[tuple[str, int]]:
+        """Legacy helper kept for NodesView-style callers; uses allocate_columns."""
+        budget = max(0, width - CHROME_OVERHEAD)
+        cols = self._make_columns()
+        return allocate_columns(budget, cols, current_tier=tier_for(width))
+
     def _rebuild_columns(self, width: int, jobs: list[Job], *, force: bool = False) -> None:
-        visible = self._visible_cols_filtered(width)
-        visible_names = [n for n, _ in visible]
+        budget = max(0, width - CHROME_OVERHEAD)
+        current_tier = tier_for(width)
+        cols = self._make_columns()
+
+        # Compute target widths via budget algorithm.
+        if jobs:
+            # Measure actual content lengths and use as content_max hint.
+            content_cols: list[ColumnSpec] = []
+            for col in cols:
+                longest = max(
+                    len(col.name),
+                    *(len(self._cell_text(job, col.name)) for job in jobs),
+                )
+                capped = min(longest + 1, col.content_max)
+                effective_max = max(col.min_width, capped)
+                content_cols.append(ColumnSpec(col.name, col.min_width, effective_max, col.priority, col.min_tier))
+        else:
+            # No data: use header width as minimum content hint.
+            content_cols = [
+                ColumnSpec(col.name, col.min_width, max(col.min_width, len(col.name) + 1), col.priority, col.min_tier)
+                for col in cols
+            ]
+
+        new_cols = allocate_columns(budget, content_cols, current_tier=current_tier)
+        visible_names = [n for n, _ in new_cols]
         has_jobs = bool(jobs)
+
         if (
             not force
             and width == self._rebuild_cache_width
             and visible_names == self._rebuild_cache_names
+            and current_tier == self._rebuild_cache_tier
         ):
             # Rebuild only on empty -> non-empty transitions at same width/layout.
             if not (has_jobs and not self._rebuild_cache_had_jobs):
                 self._rebuild_cache_had_jobs = has_jobs
                 return
-        new_cols: list[tuple[str, int]] = []
-        for col_name, min_w in visible:
-            if jobs:
-                longest = max(
-                    len(col_name),
-                    *(len(self._cell_text(job, col_name)) for job in jobs),
-                )
-            else:
-                longest = len(col_name)
-            max_w = self._col_max.get(col_name, max(min_w, longest + 1))
-            col_width = max(min_w, min(longest + 1, max_w))
-            new_cols.append((col_name, col_width))
 
         self._rebuild_cache_width = width
         self._rebuild_cache_names = visible_names
         self._rebuild_cache_had_jobs = has_jobs
+        self._rebuild_cache_tier = current_tier
         if new_cols == self._current_cols:
             return
         self._current_cols = new_cols
@@ -851,6 +900,7 @@ class JobsView(BaseDataTableView[Job]):
         table = self.query_one(CyclicDataTable)
         saved_row = table.cursor_row
         visual_set = self.visual_rows()
+        col_widths = dict(self._current_cols)
         table.clear()
         for idx, job in enumerate(jobs):
             color = STATE_COLORS.get(job.state, "white")
@@ -858,20 +908,21 @@ class JobsView(BaseDataTableView[Job]):
             selected_prefix = "✓ " if job.job_id in self._selected_job_ids else ""
             visual_prefix = "» " if idx in visual_set else ""
             row = []
-            for name, _ in self._current_cols:
+            for name, w in self._current_cols:
+                cell = self._cell_text(job, name, w)
                 if name == "JOBID":
                     row.append(
-                        f"[{color}]{selected_prefix}{visual_prefix}{watched_prefix}{self._cell_text(job, name)}[/]"
+                        f"[{color}]{selected_prefix}{visual_prefix}{watched_prefix}{cell}[/]"
                     )
                 elif name == "NAME":
-                    row.append(f"[{color}]{self._cell_text(job, name)}[/]")
+                    row.append(f"[{color}]{cell}[/]")
                 elif name == "STATE":
-                    row.append(f"[{color}]{self._cell_text(job, name)}[/]")
+                    row.append(f"[{color}]{cell}[/]")
                 elif name == "TIME_LEFT":
                     tl_display, tl_color = _time_left(job)
-                    row.append(f"[{tl_color}]{tl_display}[/]")
+                    row.append(f"[{tl_color}]{truncate_cell(tl_display, w)}[/]")
                 else:
-                    row.append(self._cell_text(job, name))
+                    row.append(cell)
             table.add_row(*row)
         if jobs:
             table.move_cursor(row=min(saved_row, len(jobs) - 1))

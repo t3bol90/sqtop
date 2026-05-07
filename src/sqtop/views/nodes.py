@@ -14,6 +14,14 @@ from .node_detail import NodeDetailScreen
 
 from ..slurm import Node, fetch_nodes
 from .. import config
+from ..responsive import (
+    ColumnSpec,
+    CHROME_OVERHEAD,
+    allocate_columns,
+    tier_for,
+    truncate_cell,
+    WidthChanged,
+)
 
 STATE_COLORS = {
     "idle":      "green",
@@ -25,18 +33,18 @@ STATE_COLORS = {
     "unknown":   "dim",
 }
 
-# (header, col_width, min_terminal_width_to_show)
-COLUMNS: list[tuple[str, int, int]] = [
-    ("NODE",       12,   0),
-    ("STATE",      12,   0),
-    ("CPU%",       14,   0),
-    ("GPU%",       14,  60),
-    ("CPUS A/T",   10,  75),
-    ("GPU A/T",     9,  75),
-    ("MEM FREE",   10,  90),
-    ("PARTITION",  12, 105),
-    ("MEM TOTAL",  10, 120),
-    ("LOAD",        8, 120),
+# ColumnSpec(name, min_width, content_max, priority, min_tier)
+COLUMNS: list[ColumnSpec] = [
+    ColumnSpec("NODE",       12, 20, 100, "xs"),
+    ColumnSpec("STATE",      12, 16,  95, "xs"),
+    ColumnSpec("CPU%",       14, 18,  90, "xs"),
+    ColumnSpec("GPU%",       14, 18,  80, "sm"),
+    ColumnSpec("CPUS A/T",  10, 12,  75, "sm"),
+    ColumnSpec("GPU A/T",    9, 12,  70, "sm"),
+    ColumnSpec("MEM FREE",  10, 12,  60, "md"),
+    ColumnSpec("PARTITION", 12, 20,  55, "md"),
+    ColumnSpec("MEM TOTAL", 10, 12,  45, "lg"),
+    ColumnSpec("LOAD",       8, 10,  40, "lg"),
 ]
 
 
@@ -64,9 +72,6 @@ def _gpu_bar(alloc: int, total: int, bar_width: int = 8) -> str:
     except ZeroDivisionError:
         return "─" * bar_width
 
-
-def _visible_cols(width: int) -> list[tuple[str, int]]:
-    return [(name, w) for name, w, min_w in COLUMNS if min_w <= width]
 
 
 def _cpu_pct(n: Node) -> float:
@@ -104,6 +109,8 @@ class NodesView(BaseDataTableView[Node]):
         self._last_sorted_nodes: list[Node] = []
         self._last_render_fp: tuple = ()
         self._current_cols: list[tuple[str, int]] = []
+        self._rebuild_cache_width: int = -1
+        self._rebuild_cache_names: list[str] = []
         cfg_all = config.load()
         view_state = cfg_all.get("view_state", {})
         saved_sort = str(view_state.get("nodes_sort_col", ""))
@@ -128,31 +135,54 @@ class NodesView(BaseDataTableView[Node]):
         return item.name
 
     def on_resize(self, event) -> None:
-        new_cols = self._visible_cols_filtered(event.size.width)
-        if new_cols != self._current_cols:
-            state = self._capture_table_state()
-            self._rebuild_columns(event.size.width)
+        state = self._capture_table_state()
+        self._rebuild_columns(event.size.width, force=True)
+        self._render_rows(self._last_sorted_nodes)
+        self._restore_table_state(state, self._last_sorted_nodes)
+
+    def on_width_changed(self, event: WidthChanged) -> None:
+        """Recompute column budget on every resize (spec §4.2)."""
+        state = self._capture_table_state()
+        changed = self._rebuild_columns(event.width)
+        if changed and self._last_sorted_nodes:
             self._render_rows(self._last_sorted_nodes)
             self._restore_table_state(state, self._last_sorted_nodes)
 
     def _visible_cols_filtered(self, width: int) -> list[tuple[str, int]]:
-        return [
-            (name, w)
-            for name, w, min_w in COLUMNS
-            if min_w <= width and name not in self._hidden_cols
-        ]
+        """Return budget-allocated columns for the given terminal width."""
+        budget = max(0, width - CHROME_OVERHEAD)
+        cols = [col for col in COLUMNS if col.name not in self._hidden_cols]
+        return allocate_columns(budget, cols, current_tier=tier_for(width))
 
-    def _rebuild_columns(self, width: int) -> None:
-        self._current_cols = self._visible_cols_filtered(width)
+    def _rebuild_columns(self, width: int, *, force: bool = False) -> bool:
+        """Rebuild column layout using budget allocation. Returns True if layout changed."""
+        new_cols = self._visible_cols_filtered(width)
+        visible_names = [n for n, _ in new_cols]
+
+        if (
+            not force
+            and width == self._rebuild_cache_width
+            and visible_names == self._rebuild_cache_names
+        ):
+            return False
+
+        self._rebuild_cache_width = width
+        self._rebuild_cache_names = visible_names
+
+        if new_cols == self._current_cols:
+            return False
+
+        self._current_cols = new_cols
         table = self.query_one(CyclicDataTable)
         table.clear(columns=True)
         for name, col_width in self._current_cols:
             table.add_column(name, width=col_width)
+        return True
 
     def _reload_column_visibility(self) -> None:
         cfg = config.load()
         self._hidden_cols = set(cfg.get("columns", {}).get("nodes_hidden", []))
-        self._rebuild_columns(self.size.width)
+        self._rebuild_columns(self.size.width, force=True)
         self._render_rows(self._last_sorted_nodes)
 
     def _capture_table_state(self) -> tuple[int, float, str | None]:

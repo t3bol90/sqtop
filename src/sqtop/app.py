@@ -170,15 +170,15 @@ class SqtopApp(App):
         cfg = config.load()
         if active == "jobs":
             view = self.query_one(JobsView)
-            all_cols = [name for name, _, _ in JOBS_COLUMNS]
+            all_cols = [col.name for col in JOBS_COLUMNS]
             hidden = list(cfg.get("columns", {}).get("jobs_hidden", []))
         elif active == "nodes":
             view = self.query_one(NodesView)
-            all_cols = [name for name, _, _ in NODES_COLUMNS]
+            all_cols = [col.name for col in NODES_COLUMNS]
             hidden = list(cfg.get("columns", {}).get("nodes_hidden", []))
         elif active == "partitions":
             view = self.query_one(PartitionsView)
-            all_cols = [name for name, _ in PARTITIONS_COLUMNS]
+            all_cols = [col.name for col in PARTITIONS_COLUMNS]
             hidden = list(cfg.get("columns", {}).get("partitions_hidden", []))
         else:
             return
