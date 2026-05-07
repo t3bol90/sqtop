@@ -236,7 +236,6 @@ class NodesView(BaseDataTableView[Node]):
         return visible
 
     def _update_nodes_header(self, nodes: list[Node]) -> None:
-        now = datetime.now().strftime("%H:%M:%S")
         visible = [n for n in nodes if n.name]
         idle = alloc = mixed = down = 0
         for n in visible:
@@ -249,6 +248,18 @@ class NodesView(BaseDataTableView[Node]):
                 mixed += 1
             if "down" in s or "drain" in s:
                 down += 1
+
+        tier = getattr(getattr(self, "app", None), "tier", "sm")
+
+        if tier == "xs":
+            # xs: compact — most signal-bearing pair: idle / down
+            warn = f"  [red bold]! {down} DOWN[/]" if down >= self._warn_down_nodes else ""
+            self.query_one("#nodes-header", Label).update(
+                f"[b]sinfo[/b]  [green]{idle} idle[/]  [red]{down} down[/]{warn}"
+            )
+            return
+
+        now = datetime.now().strftime("%H:%M:%S")
         sort_tag = ""
         if self._sort_col:
             arrow = "↑" if self._sort_reversed else "↓"

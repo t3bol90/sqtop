@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import shutil
 from collections.abc import Iterable
 from pathlib import Path
@@ -31,6 +32,32 @@ _JOBS_SORT_OPTIONS: list[tuple[str, str]] = [
     ("cpus", "CPUs"),
     ("qos", "QOS"),
 ]
+
+# Tab labels: (short_label, full_label) keyed by TabPane id.
+# short_label is used at xs tier; full_label at sm+.
+_TAB_LABELS: dict[str, tuple[str, str]] = {
+    "jobs":       ("Jobs",       "Jobs [1]"),
+    "nodes":      ("Nodes",      "Nodes [2]"),
+    "partitions": ("Partitions", "Partitions [3]"),
+    "history":    ("History",    "History [4]"),
+}
+
+# Minimum tier for each action's binding to be shown in the Footer.
+# Actions not listed here inherit their original show=True/False from BINDINGS.
+# "xs" means always show (when BINDINGS has show=True).
+# "sm" means hide at xs, show at sm+.
+# "md" means hide at xs/sm, show at md+.
+_BINDING_SHOW_AT: dict[str, Tier] = {
+    # Always visible (xs+)
+    "quit":             "xs",
+    "show_keybindings": "xs",
+    # sm+ bindings
+    "refresh":                      "sm",
+    "switch_tab('jobs')":           "sm",
+    "switch_tab('nodes')":          "sm",
+    "switch_tab('partitions')":     "sm",
+    "switch_tab('history')":        "sm",
+}
 
 
 class SqtopApp(App):
@@ -85,21 +112,101 @@ class SqtopApp(App):
         for t in ("xs", "sm", "md", "lg"):
             screen.remove_class(f"tier-{t}")
         screen.add_class(f"tier-{new}")
+        self._apply_tier_to_tabs(new)
+        self._apply_sub_title(new)
+        self._apply_tier_to_bindings(new)
 
     def watch_theme(self, theme: str) -> None:
         config.save(theme, self.interval)
 
     def on_mount(self) -> None:
         self.theme = self._saved_theme
+        # Compute the base sub_title string once; _apply_sub_title will truncate it.
         if slurm._SSH_HOST:
-            self.sub_title = f"Slurm Dashboard — {slurm._SSH_HOST}"
+            self._base_sub_title = f"Slurm Dashboard — {slurm._SSH_HOST}"
         else:
-            self.sub_title = "Slurm Dashboard"
+            self._base_sub_title = "Slurm Dashboard"
         # Ensure correct tier class is applied on first paint (spec §4.1).
         for t in ("xs", "sm", "md", "lg"):
             self.screen.remove_class(f"tier-{t}")
         self.screen.add_class(f"tier-{self.tier}")
+        self._apply_tier_to_tabs(self.tier)
+        self._apply_sub_title(self.tier)
+        self._apply_tier_to_bindings(self.tier)
         self.call_after_refresh(self._focus_table_for_tab, "jobs")
+
+    # ── Tier-driven chrome helpers ────────────────────────────────────────────
+
+    def _apply_tier_to_tabs(self, tier: str) -> None:
+        """Update tab labels: short at xs, full at sm+."""
+        try:
+            tc = self.query_one(TabbedContent)
+        except Exception:
+            return
+        for pane_id, (short, full) in _TAB_LABELS.items():
+            try:
+                tab = tc.get_tab(pane_id)
+                tab.label = short if tier == "xs" else full
+            except Exception:
+                pass
+
+    def _apply_sub_title(self, tier: str) -> None:
+        """Set sub_title per tier: empty at xs, truncated at sm+."""
+        base = getattr(self, "_base_sub_title", "Slurm Dashboard")
+        if tier == "xs":
+            self.sub_title = ""
+            return
+        # Truncate to ≤ width // 2 - 10 cells at sm+.
+        max_width = max(0, self._initial_width // 2 - 10)
+        if len(base) <= max_width or max_width <= 0:
+            self.sub_title = base
+        elif max_width < 2:
+            self.sub_title = ""
+        else:
+            self.sub_title = base[: max_width - 1] + "…"
+
+    def _apply_tier_to_bindings(self, tier: str) -> None:
+        """Adjust Footer show flags based on current tier.
+
+        Bindings whose action is not listed in _BINDING_SHOW_AT keep their
+        original show value.  Listed actions are shown only when the current
+        tier is >= their minimum tier AND the binding was originally show=True
+        in the class-level BINDINGS list.
+        """
+        _TIER_RANK: dict[str, int] = {"xs": 0, "sm": 1, "md": 2, "lg": 3}
+        current_rank = _TIER_RANK.get(tier, 0)
+
+        # Build a lookup of original show values from the class BINDINGS list.
+        # Use (key, action) as the identity since one key may have multiple bindings.
+        original_show: dict[tuple[str, str], bool] = {}
+        for b in self.BINDINGS:
+            if isinstance(b, Binding):
+                original_show[(b.key, b.action)] = b.show
+            elif isinstance(b, tuple) and len(b) >= 2:
+                # tuple form: (key, action) or (key, action, description)
+                key, action = b[0], b[1]
+                original_show[(key, action)] = True  # tuples default show=True
+
+        new_keys: dict[str, list[Binding]] = {}
+        for key, bindings in self._bindings.key_to_bindings.items():
+            new_list: list[Binding] = []
+            for binding in bindings:
+                min_tier = _BINDING_SHOW_AT.get(binding.action)
+                if min_tier is None:
+                    # Not in our responsiveness map — preserve binding as-is.
+                    new_list.append(binding)
+                else:
+                    orig = original_show.get((binding.key, binding.action), binding.show)
+                    min_rank = _TIER_RANK.get(min_tier, 0)
+                    # Show only if originally show=True AND current tier qualifies.
+                    desired_show = orig and current_rank >= min_rank
+                    if binding.show != desired_show:
+                        new_list.append(dataclasses.replace(binding, show=desired_show))
+                    else:
+                        new_list.append(binding)
+            new_keys[key] = new_list
+        self._bindings.key_to_bindings = new_keys
+        self.refresh_bindings()
 
     def on_resize(self, event) -> None:
         """Update tier and broadcast WidthChanged on every resize (spec §4.2)."""

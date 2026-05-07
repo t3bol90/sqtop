@@ -159,12 +159,20 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
         self._last_summaries = summaries
         self._last_sorted_rows = self._sorted_rows(summaries)
 
-        now = datetime.now().strftime("%H:%M:%S")
         up = sum(1 for s in summaries if s.avail.lower() == "up")
-        self.query_one("#partitions-header", Label).update(
-            f"[b]sinfo[/b]  [green]{up} up[/]  "
-            f"[dim]{len(summaries)} partitions  updated {now}[/]"
-        )
+        tier = getattr(getattr(self, "app", None), "tier", "sm")
+
+        if tier == "xs":
+            # xs: compact — partition count only
+            self.query_one("#partitions-header", Label).update(
+                f"[b]sinfo[/b]  [dim]{len(summaries)} partitions[/]"
+            )
+        else:
+            now = datetime.now().strftime("%H:%M:%S")
+            self.query_one("#partitions-header", Label).update(
+                f"[b]sinfo[/b]  [green]{up} up[/]  "
+                f"[dim]{len(summaries)} partitions  updated {now}[/]"
+            )
 
         new_fp = tuple((s.partition, s.state, s.nodes) for s in self._last_sorted_rows)
         if new_fp == self._last_render_fp:

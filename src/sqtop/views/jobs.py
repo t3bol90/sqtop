@@ -837,11 +837,20 @@ class JobsView(BaseDataTableView[Job]):
         self._update_header(jobs)
 
     def _update_header(self, all_jobs: list[Job]) -> None:
+        total = len(all_jobs)
+        tier = getattr(getattr(self, "app", None), "tier", "sm")
+
+        if tier == "xs":
+            # xs: compact — just total count
+            self.query_one("#jobs-header", Label).update(
+                f"[b]squeue[/b]  [dim]{total} total[/]"
+            )
+            return
+
         now = datetime.now().strftime("%H:%M:%S")
         running = sum(1 for j in all_jobs if j.state == "RUNNING")
         pending = sum(1 for j in all_jobs if j.state == "PENDING")
         filtered = len(self._last_jobs)
-        total = len(all_jobs)
         count_str = f"{filtered}/{total} jobs" if filtered != total else f"{total} total"
 
         tags: list[str] = []
