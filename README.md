@@ -55,6 +55,23 @@ If you run with this repo's local Docker-backed cluster shims, use:
 ./run.sh
 ```
 
+## Terminal sizing
+
+sqtop is designed for terminals at least **80 columns wide** for normal day-to-day use. Narrower terminals work, but some columns and bars will be hidden automatically — that is intentional, not a bug.
+
+**Column and bar visibility** scales with width:
+
+- All columns visible at ≥ 160 cols.
+- Most columns visible at ≥ 110 cols.
+- Core columns (job ID, name, state) visible at ≥ 40 cols.
+- CPU/GPU bars in the Nodes view shrink to numeric-only (`42%`) at narrow widths.
+
+**Hard floor: 40 columns × 10 rows.** Below this size sqtop shows a "Terminal too small" notice and hides the main UI. Resize the terminal (or tmux pane) above the floor to restore normal operation — no restart needed.
+
+**SSH and tmux pane reflow work automatically.** When you resize a tmux pane or your SSH window changes size, sqtop receives a resize event and reflows immediately on the next frame. No manual refresh is needed.
+
+**Recommended minimum for comfortable use:** 80 × 24. At this size you get the full jobs table with user, time, and time-left columns, and the footer shows the most-used key bindings.
+
 ## Copying data
 
 ### Quick reference

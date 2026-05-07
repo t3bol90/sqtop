@@ -11,7 +11,7 @@ from textual.binding import Binding
 from textual.css.query import NoMatches
 from textual.reactive import reactive
 from textual.screen import Screen
-from textual.widgets import Footer, Header, TabbedContent, TabPane
+from textual.widgets import Footer, Header, Static, TabbedContent, TabPane
 
 from .views.base import BaseDataTableView
 from .views.jobs import JobsView, COLUMNS as JOBS_COLUMNS
@@ -22,7 +22,7 @@ from .views.column_toggle import ColumnToggleScreen
 from .views.keybindings_help import KeybindingHelpScreen
 from . import config, slurm
 from .clipboard import app_copy
-from .responsive import Tier, TIER_WIDTH, WidthChanged, tier_for
+from .responsive import Tier, TIER_WIDTH, TOO_SMALL_WIDTH, TOO_SMALL_HEIGHT, WidthChanged, tier_for
 
 # (sort_key, human-readable label) — order determines palette display order
 _JOBS_SORT_OPTIONS: list[tuple[str, str]] = [
@@ -86,6 +86,9 @@ class SqtopApp(App):
     # Responsive tier reactive — initialized from terminal size before first paint.
     tier: reactive[Tier] = reactive("sm")
 
+    # Too-small floor — True when terminal is below 40×10.
+    too_small: reactive[bool] = reactive(False)
+
     def __init__(self) -> None:
         super().__init__()
         cfg = config.load()
@@ -101,20 +104,45 @@ class SqtopApp(App):
         self._initial_width: int = size.columns
         self._initial_height: int = size.lines
         self.tier = tier_for(self._initial_width)
+        self.too_small = (
+            self._initial_width < TOO_SMALL_WIDTH
+            or self._initial_height < TOO_SMALL_HEIGHT
+        )
 
     def watch_tier(self, old: str | None, new: str) -> None:
         """Swap tier-* CSS class on self.screen when tier changes."""
-        try:
-            screen = self.screen
-        except Exception:
-            return
-        # Remove all existing tier classes.
         for t in ("xs", "sm", "md", "lg"):
             screen.remove_class(f"tier-{t}")
         screen.add_class(f"tier-{new}")
         self._apply_tier_to_tabs(new)
         self._apply_sub_title(new)
         self._apply_tier_to_bindings(new)
+
+    def watch_too_small(self, value: bool) -> None:
+        """Toggle app-too-small CSS class and update the message widget."""
+        try:
+            screen = self.screen
+        except Exception:
+            return
+        if value:
+            screen.add_class("app-too-small")
+        else:
+            screen.remove_class("app-too-small")
+        self._update_too_small_message()
+
+    def _update_too_small_message(self) -> None:
+        """Refresh the dimensions shown in the too-small overlay."""
+        try:
+            widget = self.query_one("#too-small-message", Static)
+        except Exception:
+            return
+        w = self.size.width or self._initial_width
+        h = self.size.height or self._initial_height
+        widget.update(
+            f"Terminal too small.\n"
+            f"Resize to at least {TOO_SMALL_WIDTH}×{TOO_SMALL_HEIGHT}.\n"
+            f"Current: {w}×{h}"
+        )
 
     def watch_theme(self, theme: str) -> None:
         config.save(theme, self.interval)
@@ -133,6 +161,10 @@ class SqtopApp(App):
         self._apply_tier_to_tabs(self.tier)
         self._apply_sub_title(self.tier)
         self._apply_tier_to_bindings(self.tier)
+        # Apply too-small class if needed on first paint.
+        if self.too_small:
+            self.screen.add_class("app-too-small")
+        self._update_too_small_message()
         self.call_after_refresh(self._focus_table_for_tab, "jobs")
 
     # ── Tier-driven chrome helpers ────────────────────────────────────────────
@@ -209,13 +241,17 @@ class SqtopApp(App):
         self.refresh_bindings()
 
     def on_resize(self, event) -> None:
-        """Update tier and broadcast WidthChanged on every resize (spec §4.2)."""
+        """Update tier, too_small, and broadcast WidthChanged on every resize."""
         width: int = event.size.width
         height: int = event.size.height
         new_tier = tier_for(width)
         if new_tier != self.tier:
-            self.tier = new_tier  # triggers watch_tier for CSS class swap
-        # Always broadcast so views can recompute column budgets intra-tier.
+            self.tier = new_tier
+        new_too_small = width < TOO_SMALL_WIDTH or height < TOO_SMALL_HEIGHT
+        if new_too_small != self.too_small:
+            self.too_small = new_too_small
+        elif new_too_small:
+            self._update_too_small_message()
         self.post_message(WidthChanged(width, height, new_tier))
 
     def push_screen(self, screen, callback=None, wait_for_dismiss: bool = False, **kwargs):
@@ -228,6 +264,7 @@ class SqtopApp(App):
         return super().push_screen(screen, callback, wait_for_dismiss=wait_for_dismiss, **kwargs)
 
     def compose(self) -> ComposeResult:
+        yield Static("", id="too-small-message")
         yield Header()
         with TabbedContent(initial="jobs"):
             with TabPane("Jobs [1]", id="jobs"):

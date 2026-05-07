@@ -76,3 +76,24 @@ Footer {
     background: $panel;
     color: $text-muted;
 }
+
+/* ── Too-small floor (spec §5.7) ────────────────────────── */
+
+#too-small-message {
+    display: none;
+    width: 100%;
+    height: 100%;
+    content-align: center middle;
+    color: $error;
+    text-style: bold;
+}
+
+.app-too-small Header,
+.app-too-small TabbedContent,
+.app-too-small Footer {
+    display: none;
+}
+
+.app-too-small #too-small-message {
+    display: block;
+}
