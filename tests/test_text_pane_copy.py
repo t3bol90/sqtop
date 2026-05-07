@@ -24,7 +24,10 @@ def test_copy_to_clipboard_ok():
 def test_copy_to_clipboard_failure():
     app = MagicMock()
     app.copy_to_clipboard.side_effect = Exception("no clipboard")
-    result = copy_to_clipboard(app, "hello")
+    # Pretend we're running over SSH so the subprocess fallback is disabled —
+    # OSC 52 is the only path on remote hosts.
+    with patch("sqtop.clipboard.slurm._SSH_HOST", "remote.example.com"):
+        result = copy_to_clipboard(app, "hello")
     assert result.ok is False
     assert result.transport == "none"
 
@@ -46,7 +49,8 @@ def test_app_copy_ok_message():
 def test_app_copy_failure_message():
     app = MagicMock()
     app.copy_to_clipboard.side_effect = Exception("fail")
-    r = app_copy(app, "some text", label="Test")
+    with patch("sqtop.clipboard.slurm._SSH_HOST", "remote.example.com"):
+        r = app_copy(app, "some text", label="Test")
     assert r.ok is False
     call_kwargs = app.notify.call_args
     msg = call_kwargs[0][0]
@@ -93,17 +97,9 @@ def _make_detail_view() -> DetailView:
 
 def test_detail_view_show_job_populates_text():
     """DetailView.show_job should load text into the TextArea."""
-    from textual.widgets import TextArea
-
     dv = DetailView()
-    # We can test the text building logic without a full app:
-    # _render_kv builds lines and calls load_text on the TextArea.
-    # Simulate by accessing the internal method with a mock TextArea.
-    mock_ta = MagicMock()
-    with patch.object(dv, "query_one", return_value=mock_ta):
-        dv.show_job({"JobId": "123", "JobName": "test"})
-    mock_ta.load_text.assert_called_once()
-    text = mock_ta.load_text.call_args[0][0]
+    dv.show_job({"JobId": "123", "JobName": "test"})
+    text = dv.plain_text()
     assert "Job Detail" in text
     assert "JobId" in text
     assert "123" in text
@@ -113,23 +109,17 @@ def test_detail_view_show_job_populates_text():
 
 def test_detail_view_show_node_populates_text():
     dv = DetailView()
-    mock_ta = MagicMock()
-    with patch.object(dv, "query_one", return_value=mock_ta):
-        dv.show_node({"NodeName": "node01", "State": "idle"})
-    mock_ta.load_text.assert_called_once()
-    text = mock_ta.load_text.call_args[0][0]
+    dv.show_node({"NodeName": "node01", "State": "idle"})
+    text = dv.plain_text()
     assert "Node Detail" in text
     assert "NodeName" in text
     assert "node01" in text
 
 
-def test_detail_view_get_text():
+def test_detail_view_plain_text_accessor():
     dv = DetailView()
-    mock_ta = MagicMock()
-    mock_ta.text = "hello world"
-    with patch.object(dv, "query_one", return_value=mock_ta):
-        result = dv.get_text()
-    assert result == "hello world"
+    dv._plain_text = "hello world"
+    assert dv.plain_text() == "hello world"
 
 
 # ---------------------------------------------------------------------------

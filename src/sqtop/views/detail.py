@@ -30,6 +30,10 @@ class DetailView(Widget):
     }
     """
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._plain_text: str = ""
+
     def compose(self) -> ComposeResult:
         yield TextArea("", read_only=True)
 
@@ -58,8 +62,10 @@ class DetailView(Widget):
         for k, v in data.items():
             lines.append(f"  {k}: {v}")
         text = "\n".join(lines)
-        self.query_one(TextArea).load_text(text)
+        self._plain_text = text
+        if self.is_mounted:
+            self.query_one(TextArea).load_text(text)
 
     def plain_text(self) -> str:
         """Return the current plain-text content."""
-        return self.query_one(TextArea).text
+        return self._plain_text

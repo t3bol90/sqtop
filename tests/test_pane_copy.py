@@ -374,13 +374,13 @@ def test_log_viewer_copy_pane():
 
 
 def test_job_info_copy_pane():
-    """JobInfoScreen.copy_pane() strips Rich markup and returns plain text."""
+    """JobInfoScreen.copy_pane() returns the stored plain text body."""
     from sqtop.views.job_info import JobInfoScreen
 
     job = _make_job(job_id="777", name="my_job")
     screen = JobInfoScreen.__new__(JobInfoScreen)
     screen._job = job
-    screen._markup_text = "[bold cyan]── Identity ──[/bold cyan]\n  [bold]Job ID:[/bold]     777\n"
+    screen._plain_text = "── Identity ──\n  Job ID:     777\n"
 
     label, payload, count = screen.copy_pane()
     assert "777" in label
@@ -390,19 +390,17 @@ def test_job_info_copy_pane():
 
 
 def test_detail_view_plain_text():
-    """DetailView.plain_text() returns markup-free key=value lines."""
+    """DetailView.plain_text() returns the stored plain-text body."""
     from sqtop.views.detail import DetailView
 
-    # Instantiate without Textual app context
     view = DetailView.__new__(DetailView)
-    view._plain_title = "Job Detail"
-    view._plain_data = {"JobId": "123", "JobName": "test"}
+    view._plain_text = "Job Detail\n\n  JobId: 123\n  JobName: test"
 
     text = view.plain_text()
     assert "Job Detail" in text
     assert "JobId: 123" in text
     assert "JobName: test" in text
-    assert "[" not in text  # no markup
+    assert "[" not in text
 
 
 def test_job_detail_copy_pane_fallback():

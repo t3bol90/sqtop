@@ -197,6 +197,7 @@ class JobInfoScreen(ModalScreen[None]):
         return f"[{color}]{state}[/{color}]"
 
     def _update_content(self, text: str) -> None:
+        self._plain_text = text
         self.query_one("#job-info-content", TextArea).load_text(text)
 
     def action_copy_selection_or_all(self) -> None:
@@ -209,6 +210,6 @@ class JobInfoScreen(ModalScreen[None]):
 
     def copy_pane(self) -> tuple[str, str, int]:
         """Return (label, payload, line_count) for ctrl+shift+y."""
-        text = self.query_one("#job-info-content", TextArea).text
+        text = getattr(self, "_plain_text", "")
         label = f"Job {self._job.job_id} Info"
         return label, text, len(text.splitlines())
