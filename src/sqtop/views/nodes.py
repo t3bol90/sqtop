@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from rich.text import Text
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.widgets import DataTable, Label
@@ -101,8 +102,9 @@ class NodesView(BaseDataTableView[Node]):
         Binding("V", "visual_enter", "Visual", show=False),
         Binding("escape", "visual_exit", "Exit visual", show=False),
         Binding("y", "yank", "Copy", show=False),
-        Binding("left_square_bracket", "shift_column_left", show=False),
-        Binding("right_square_bracket", "shift_column_right", show=False),
+        Binding("full_stop",            "cycle_reorder_target", show=False),
+        Binding("left_square_bracket",  "shift_column_left",    show=False),
+        Binding("right_square_bracket", "shift_column_right",   show=False),
     ]
 
     def __init__(self, interval: float = 2.0, start_offset: float = 0.0) -> None:
@@ -124,6 +126,7 @@ class NodesView(BaseDataTableView[Node]):
         saved_order = list(cfg_all.get("columns", {}).get("nodes_order", []))
         default_order = [c.name for c in COLUMNS]
         self._column_order: list[str] = _reconcile_order(saved_order, default_order)
+        self._reorder_target_idx: int = 0
         self._warn_down_nodes = int(cfg_all.get("health", {}).get("warn_down_nodes", 1))
 
     def compose(self) -> ComposeResult:
@@ -180,14 +183,16 @@ class NodesView(BaseDataTableView[Node]):
         self._rebuild_cache_width = width
         self._rebuild_cache_names = visible_names
 
-        if new_cols == self._current_cols:
+        if not force and new_cols == self._current_cols:
             return False
 
         self._current_cols = new_cols
         table = self.query_one(CyclicDataTable)
         table.clear(columns=True)
-        for name, col_width in self._current_cols:
-            table.add_column(name, width=col_width)
+        target_idx = self._reorder_target_idx % max(1, len(self._current_cols))
+        for idx, (name, col_width) in enumerate(self._current_cols):
+            label: object = Text(name, style="reverse bold") if idx == target_idx else name
+            table.add_column(label, width=col_width)
         return True
 
     def _reload_column_visibility(self) -> None:
@@ -245,20 +250,28 @@ class NodesView(BaseDataTableView[Node]):
         """Write current column order to config."""
         config.update({"columns": {"nodes_order": list(self._column_order)}})
 
-    def _shift_visible_column(self, direction: int) -> None:
-        """Shift the column under the cursor left (direction=-1) or right (+1).
+    def action_cycle_reorder_target(self) -> None:
+        """Advance the reorder-target column one step to the right (wraps)."""
+        n = len(self._current_cols)
+        if n == 0:
+            return
+        self._reorder_target_idx = (self._reorder_target_idx + 1) % n
+        state = self._capture_table_state()
+        self._rebuild_columns(self.size.width, force=True)
+        self._render_rows(self._last_sorted_nodes)
+        self._restore_table_state(state, self._last_sorted_nodes)
 
-        Works in visible-column space: finds the cursor column name, locates it
-        in ``_column_order``, swaps with the neighbour in the same direction
+    def _shift_visible_column(self, direction: int) -> None:
+        """Shift the reorder-target column left (direction=-1) or right (+1).
+
+        Works in visible-column space: finds the targeted column name, locates
+        it in ``_column_order``, swaps with the neighbour in the same direction
         (skipping hidden columns), persists, rebuilds and re-renders.
         """
-        table = self.query_one(CyclicDataTable)
         visible_names = [name for name, _ in self._current_cols]
         if not visible_names:
             return
-        vis_idx = table.cursor_column
-        if vis_idx < 0 or vis_idx >= len(visible_names):
-            return
+        vis_idx = self._reorder_target_idx % len(visible_names)
         col_name = visible_names[vis_idx]
 
         # Boundary guard
@@ -279,12 +292,12 @@ class NodesView(BaseDataTableView[Node]):
         )
         self._persist_column_order()
 
+        # Track the moved column: update target so highlight follows it.
+        self._reorder_target_idx = vis_idx + direction
+
         state = self._capture_table_state()
         self._rebuild_columns(self.size.width, force=True)
         self._render_rows(self._last_sorted_nodes)
-        # Move cursor to the moved column's new visible position
-        new_vis_idx = vis_idx + direction
-        table.move_cursor(column=new_vis_idx)
         self._restore_table_state(state, self._last_sorted_nodes)
 
     def action_shift_column_left(self) -> None:
@@ -325,6 +338,15 @@ class NodesView(BaseDataTableView[Node]):
         self._persist_column_order()
         state = self._capture_table_state()
         self._rebuild_columns(self.size.width, force=True)
+        # Move target onto the dragged column so the header highlight follows it.
+        new_visible = [n for n, _ in self._current_cols]
+        try:
+            new_target = new_visible.index(moved_name)
+            if new_target != self._reorder_target_idx:
+                self._reorder_target_idx = new_target
+                self._rebuild_columns(self.size.width, force=True)
+        except ValueError:
+            pass
         self._render_rows(self._last_sorted_nodes)
         self._restore_table_state(state, self._last_sorted_nodes)
 

@@ -129,7 +129,7 @@ def test_shift_column_right_on_last_col_is_noop(monkeypatch, temp_config):
     original_order = list(view._column_order)
     visible = [(name, 10) for name in original_order[:5]]
     view._current_cols = visible
-    fake_table.cursor_column = len(visible) - 1
+    view._reorder_target_idx = len(visible) - 1
 
     monkeypatch.setattr(view, "query_one", lambda *a, **kw: fake_table)
 

@@ -6,6 +6,7 @@ import os
 import shlex
 from datetime import datetime
 
+from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -230,8 +231,9 @@ class JobsView(BaseDataTableView[Job]):
         Binding("s", "sort_state", show=False),
         Binding("t", "sort_time", show=False),
         Binding("c", "sort_cpus", show=False),
-        Binding("left_square_bracket",  "shift_column_left",  show=False),
-        Binding("right_square_bracket", "shift_column_right", show=False),
+        Binding("full_stop",            "cycle_reorder_target", show=False),
+        Binding("left_square_bracket",  "shift_column_left",    show=False),
+        Binding("right_square_bracket", "shift_column_right",   show=False),
         Binding("y", "yank", "Copy", show=False),
         Binding("Y", "yank_row", "Copy row", show=False),
         Binding("v", "visual_enter", "Visual", show=False),
@@ -288,6 +290,7 @@ class JobsView(BaseDataTableView[Job]):
         saved_order = list(cfg_all.get("columns", {}).get("jobs_order", []))
         default_order = [c.name for c in COLUMNS]
         self._column_order: list[str] = _reconcile_order(saved_order, default_order)
+        self._reorder_target_idx: int = 0
         self._warn_pending_ratio = float(cfg_all.get("health", {}).get("warn_pending_ratio", 0.7))
         self._desktop_notify_enabled = bool(
             cfg_all.get("notifications", {}).get("desktop_enabled", True)
@@ -446,13 +449,15 @@ class JobsView(BaseDataTableView[Job]):
         self._rebuild_cache_names = visible_names
         self._rebuild_cache_had_jobs = has_jobs
         self._rebuild_cache_tier = current_tier
-        if new_cols == self._current_cols:
+        if not force and new_cols == self._current_cols:
             return
         self._current_cols = new_cols
         table = self.query_one(CyclicDataTable)
         table.clear(columns=True)
-        for name, col_width in self._current_cols:
-            table.add_column(name, width=col_width)
+        target_idx = self._reorder_target_idx % max(1, len(self._current_cols))
+        for idx, (name, col_width) in enumerate(self._current_cols):
+            label: object = Text(name, style="reverse bold") if idx == target_idx else name
+            table.add_column(label, width=col_width)
 
     def _capture_table_state(self) -> tuple[int, float, str | None]:
         table = self.query_one(CyclicDataTable)
@@ -509,18 +514,26 @@ class JobsView(BaseDataTableView[Job]):
     def _persist_column_order(self) -> None:
         config.update({"columns": {"jobs_order": list(self._column_order)}})
 
-    def _shift_visible_column(self, direction: int) -> None:
-        """Shift the column under the cursor left (-1) or right (+1) in _column_order.
+    def action_cycle_reorder_target(self) -> None:
+        """Advance the reorder-target column one step to the right (wraps)."""
+        n = len(self._current_cols)
+        if n == 0:
+            return
+        self._reorder_target_idx = (self._reorder_target_idx + 1) % n
+        self._rebuild_columns(self.size.width, self._last_jobs, force=True)
+        self._render_rows(self._last_jobs)
 
-        Operates in visible-column space for the cursor, then translates to the
+    def _shift_visible_column(self, direction: int) -> None:
+        """Shift the reorder-target column left (-1) or right (+1) in _column_order.
+
+        Operates in visible-column space for the target, then translates to the
         absolute _column_order index for the swap.
         """
         table = self.query_one(CyclicDataTable)
-        vis_idx = table.cursor_column
         visible_names = [name for name, _ in self._current_cols]
         if not visible_names:
             return
-        vis_idx = max(0, min(vis_idx, len(visible_names) - 1))
+        vis_idx = self._reorder_target_idx % len(visible_names)
         name = visible_names[vis_idx]
 
         abs_idx = self._column_order.index(name)
@@ -553,18 +566,16 @@ class JobsView(BaseDataTableView[Job]):
         )
         self._persist_column_order()
 
+        # Track the moved column: update target so highlight follows it.
+        self._reorder_target_idx = max(0, min(vis_idx + direction, len(visible_names) - 1))
+
         # Rebuild columns and re-render.
         state = self._capture_table_state()
         self._rebuild_columns(self.size.width, self._last_jobs, force=True)
         self._render_rows(self._last_jobs)
-
-        # Re-position cursor onto the moved column's NEW visible index.
-        new_visible_names = [n for n, _ in self._current_cols]
-        try:
-            new_vis_idx = new_visible_names.index(name)
-        except ValueError:
-            new_vis_idx = vis_idx
-        table.move_cursor(column=new_vis_idx, row=state[0])
+        # Restore data-row cursor (column index is row-mode irrelevant).
+        if state[0] >= 0:
+            table.move_cursor(row=state[0])
 
     def action_shift_column_left(self) -> None:
         self._shift_visible_column(-1)
@@ -608,6 +619,17 @@ class JobsView(BaseDataTableView[Job]):
 
         self._persist_column_order()
         self._rebuild_columns(self.size.width, self._last_jobs, force=True)
+        # Move the reorder target onto the dropped column so the header
+        # highlight follows it. Requires another rebuild because the header
+        # label is fixed at add_column time.
+        new_visible = [n for n, _ in self._current_cols]
+        try:
+            new_target = new_visible.index(moved_name)
+            if new_target != self._reorder_target_idx:
+                self._reorder_target_idx = new_target
+                self._rebuild_columns(self.size.width, self._last_jobs, force=True)
+        except ValueError:
+            pass
         self._render_rows(self._last_jobs)
 
     def action_yank(self) -> None:

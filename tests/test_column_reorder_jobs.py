@@ -98,7 +98,7 @@ def test_shift_right_on_last_visible_column_is_noop(monkeypatch, temp_config):
     original_order = list(view._column_order)
     view._current_cols = [(c.name, 10) for c in COLUMNS]
     last_vis_idx = len(view._current_cols) - 1
-    view.query_one(None).cursor_column = last_vis_idx
+    view._reorder_target_idx = last_vis_idx
 
     view.action_shift_column_right()
 

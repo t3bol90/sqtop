@@ -107,14 +107,19 @@ Two new view-local bindings on `JobsView` and `NodesView`:
 
 | Key   | Action                                                              |
 |-------|---------------------------------------------------------------------|
-| `[`   | Move the column under the data cursor one position left             |
-| `]`   | Move the column under the data cursor one position right            |
+| `.`   | Cycle the **reorder target** one column to the right (wraps)        |
+| `[`   | Move the targeted column one position left                          |
+| `]`   | Move the targeted column one position right                         |
+
+The targeted column's header is rendered with reverse-video styling so the user can see which column will move. The target persists across rebuilds (column visibility changes, terminal resize) — the index is clamped to `[0, num_visible)`. After a successful shift or mouse drop, the target follows the moved column so consecutive `[`/`]` presses keep operating on it.
+
+Why a separate "target" concept rather than reusing the data-row cursor: `DataTable` is configured with `cursor_type="row"` so the row cursor exists but `cursor_column` is meaningless. Adding a column-level cursor would change the feel of the table for every user, even those uninterested in reordering. A dedicated, opt-in target preserves the row-oriented experience.
 
 Semantics:
 
-- The "column under the data cursor" is determined from the table's current cursor column index, mapped back to the column name via `_current_cols[cursor_column].name`.
+- The targeted column is `self._current_cols[self._reorder_target_idx]`. `_reorder_target_idx` defaults to `0` (leftmost visible column) and is mutated by `.` and by successful shifts/mouse drops.
 - A shift swaps that column with its left/right neighbor in `_column_order`, then triggers `_rebuild_columns(force=True)` and a `_render_rows(...)`.
-- Cursor follows the moved column: after a shift, the cursor remains on the same column (now at the new index). The data row under the cursor does not change.
+- Target follows the moved column: after a shift, `_reorder_target_idx` is updated to the column's new visible position so the highlight stays on it. The data row under the cursor does not change.
 - Shifting the leftmost-visible column further left, or rightmost-visible further right, is a no-op (no wrap). Wrapping a column from one edge to the other is a deliberately bigger gesture and should be done with mouse drag.
 - Hidden columns are skipped when locating the swap neighbor. `[` swaps with the *next visible* column to the left, even if hidden columns sit between them in `_column_order`. Rationale: a press that produced no visible movement (because the immediate neighbor was hidden) felt broken in early prototyping; users perceive hidden columns as not occupying a position.
 
