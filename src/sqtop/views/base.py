@@ -96,3 +96,29 @@ class BaseDataTableView(Static, Generic[T]):
         else:
             self._sort_col = normalized
             self._sort_reversed = False
+
+    # ── Copy-pane interface (subclasses must implement) ───────────────────────
+
+    def _pane_label(self) -> str:
+        """Human-readable label for this pane (used in clipboard notify)."""
+        raise NotImplementedError
+
+    def _current_items(self) -> list:
+        """Return the current filtered/sorted list of items to copy."""
+        raise NotImplementedError
+
+    def _row_tsv(self, item) -> str:
+        """Return a tab-separated string for one data item."""
+        raise NotImplementedError
+
+    def copy_pane(self) -> tuple[str, str, int]:
+        """Return (label, tsv_payload, row_count) for the full visible pane.
+
+        Header line is included; payload ends with a trailing newline.
+        Row count = number of data rows (excluding header).
+        """
+        header = "\t".join(name for name, _ in self._current_cols)
+        items = self._current_items()
+        rows = [self._row_tsv(item) for item in items]
+        payload = "\n".join([header, *rows]) + "\n"
+        return self._pane_label(), payload, len(rows)

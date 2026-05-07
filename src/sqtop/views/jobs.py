@@ -334,6 +334,17 @@ class JobsView(BaseDataTableView[Job]):
     def _cell_text(self, job: Job, col_name: str) -> str:
         return _truncate(self._plain_cell(job, col_name), self._col_max.get(col_name))
 
+    # ── Copy-pane interface ───────────────────────────────────────────────────
+
+    def _pane_label(self) -> str:
+        return "Jobs"
+
+    def _current_items(self) -> list[Job]:
+        return list(self._last_jobs)
+
+    def _row_tsv(self, item: Job) -> str:
+        return "\t".join(self._plain_cell(item, name) for name, _ in self._current_cols)
+
     def _visible_cols_filtered(self, width: int) -> list[tuple[str, int]]:
         return [
             (name, min_w)

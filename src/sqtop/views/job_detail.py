@@ -109,3 +109,13 @@ class JobDetailScreen(ModalScreen[None]):
 
     def _hide_efficiency(self) -> None:
         self.query_one("#job-detail-efficiency", Static).display = False
+
+    def copy_pane(self) -> tuple[str, str, int]:
+        """Return (label, payload, line_count) for clipboard copy."""
+        try:
+            text = self.query_one("#job-detail-view", DetailView).plain_text()
+        except Exception:
+            text = "\n".join(f"{k}: {v}" for k, v in self._data.items())
+        label = f"Job {self._job_id} Detail"
+        count = len(text.splitlines())
+        return label, text, count

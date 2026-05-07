@@ -48,6 +48,7 @@ class JobInfoScreen(ModalScreen[None]):
     def __init__(self, job: Job) -> None:
         super().__init__()
         self._job = job
+        self._markup_text: str = ""
 
     def compose(self) -> ComposeResult:
         header = f"Job {self._job.job_id}"
@@ -181,4 +182,14 @@ class JobInfoScreen(ModalScreen[None]):
         return f"[{color}]{state}[/{color}]"
 
     def _update_content(self, markup: str) -> None:
+        self._markup_text = markup
         self.query_one("#job-info-content", Static).update(markup)
+
+    def copy_pane(self) -> tuple[str, str, int]:
+        """Return (label, payload, line_count) for clipboard copy."""
+        # Strip Rich markup tags for a plain-text copy
+        import re
+        text = re.sub(r"\[/?[^\[\]]*\]", "", getattr(self, "_markup_text", ""))
+        label = f"Job {self._job.job_id} Info"
+        count = len(text.splitlines())
+        return label, text, count

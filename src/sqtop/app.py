@@ -18,6 +18,7 @@ from .views.history import HistoryView
 from .views.column_toggle import ColumnToggleScreen
 from .views.keybindings_help import KeybindingHelpScreen
 from . import config, slurm
+from .clipboard import app_copy
 
 # (sort_key, human-readable label) — order determines palette display order
 _JOBS_SORT_OPTIONS: list[tuple[str, str]] = [
@@ -47,6 +48,7 @@ class SqtopApp(App):
         Binding("ctrl+p", "command_palette", "Commands", show=False),
         Binding("C", "column_toggle", "Columns", show=False),
         Binding("question_mark", "show_keybindings", "Keys", show=True),
+        Binding("ctrl+shift+y", "copy_pane", "Copy pane", show=False),
     ]
 
     TITLE = "sqtop"
@@ -244,6 +246,41 @@ class SqtopApp(App):
             self.notify(f"Saved screenshot: {path}", title="Screenshot")
         except Exception as exc:
             self.notify(f"Screenshot failed: {exc}", title="Screenshot", severity="error")
+
+    def action_copy_pane(self) -> None:
+        """Copy the active pane's full contents to clipboard."""
+        # If a modal is on top of the screen stack, copy from it.
+        screen = self.screen
+        if hasattr(screen, "copy_pane"):
+            label, payload, count = screen.copy_pane()
+            app_copy(self, payload, label=f"Copied pane: {label}", count=count)
+            return
+
+        # Otherwise resolve the active tab view.
+        try:
+            active = self.query_one(TabbedContent).active
+        except Exception:
+            self.notify("No active pane to copy", severity="warning")
+            return
+
+        view_map = {
+            "jobs": JobsView,
+            "nodes": NodesView,
+            "partitions": PartitionsView,
+            "history": HistoryView,
+        }
+        view_cls = view_map.get(active)
+        if view_cls is None:
+            self.notify("No active pane to copy", severity="warning")
+            return
+        try:
+            view = self.query_one(view_cls)
+        except Exception:
+            self.notify("No active pane to copy", severity="warning")
+            return
+
+        label, payload, count = view.copy_pane()
+        app_copy(self, payload, label=f"Copied pane: {label}", count=count)
 
     def action_show_help_panel(self) -> None:
         """Open Textual help panel; fail gracefully if optional deps are missing."""

@@ -45,6 +45,7 @@ class NodeDetailScreen(ModalScreen[None]):
     def __init__(self, node: Node) -> None:
         super().__init__()
         self._node = node
+        self._detail_data: dict[str, str] = {}
 
     def compose(self) -> ComposeResult:
         with Static(id="node-detail-dialog"):
@@ -64,4 +65,16 @@ class NodeDetailScreen(ModalScreen[None]):
         self.app.call_from_thread(self._show_detail, data)
 
     def _show_detail(self, data: dict[str, str]) -> None:
+        self._detail_data = data
         self.query_one("#node-detail-view", DetailView).show_node(data)
+
+    def copy_pane(self) -> tuple[str, str, int]:
+        """Return (label, payload, line_count) for clipboard copy."""
+        try:
+            text = self.query_one("#node-detail-view", DetailView).plain_text()
+        except Exception:
+            data = getattr(self, "_detail_data", {})
+            text = "\n".join(f"{k}: {v}" for k, v in data.items())
+        label = f"Node {self._node.name} Detail"
+        count = len(text.splitlines())
+        return label, text, count

@@ -85,3 +85,10 @@ class LogViewerScreen(ModalScreen[None]):
         log = self.query_one("#log-output", RichLog)
         log.clear()
         log.write(content)
+
+    def copy_pane(self) -> tuple[str, str, int]:
+        """Return (label, payload, line_count) for clipboard copy."""
+        text = self._last_content
+        label = f"Log {self._log_type} job {self._job_id}"
+        count = len(text.splitlines())
+        return label, text, count

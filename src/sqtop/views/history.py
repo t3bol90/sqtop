@@ -217,3 +217,39 @@ class HistoryView(BaseDataTableView[SacctJob]):
             )
         if jobs and table.cursor_row < 0:
             table.move_cursor(row=0)
+
+    # ── Copy-pane interface ───────────────────────────────────────────────────
+
+    def _pane_label(self) -> str:
+        return "History"
+
+    def _current_items(self) -> list[SacctJob]:
+        return list(self._last_jobs)
+
+    def _plain_cell(self, job: SacctJob, col_name: str) -> str:
+        if col_name == "JOBID":
+            return job.job_id
+        if col_name == "NAME":
+            return job.name
+        if col_name == "USER":
+            return job.user
+        if col_name == "STATE":
+            return job.state
+        if col_name == "ELAPSED":
+            return job.elapsed
+        if col_name == "EXIT":
+            return job.exit_code
+        if col_name == "PARTITION":
+            return job.partition
+        return ""
+
+    def _row_tsv(self, item: SacctJob) -> str:
+        return "\t".join(self._plain_cell(item, name) for name, _ in COLUMNS)
+
+    def copy_pane(self) -> tuple[str, str, int]:
+        """Return (label, tsv_payload, row_count) for the history pane."""
+        header = "\t".join(name for name, _ in COLUMNS)
+        items = self._current_items()
+        rows = [self._row_tsv(item) for item in items]
+        payload = "\n".join([header, *rows]) + "\n"
+        return self._pane_label(), payload, len(rows)

@@ -177,6 +177,41 @@ class PartitionsView(BaseDataTableView[ClusterSummary]):
             return f"[{state_color}]{s.state}[/]"
         return s.nodelist
 
+    def _plain_cell(self, s: ClusterSummary, name: str) -> str:
+        """Return plain (markup-free) cell text for a partition column."""
+        if name == "PARTITION":
+            return s.partition
+        if name == "AVAIL":
+            return s.avail
+        if name == "TIMELIMIT":
+            return s.timelimit
+        if name == "NODES":
+            return s.nodes
+        if name == "STATE":
+            return s.state
+        return s.nodelist
+
+    # ── Copy-pane interface ───────────────────────────────────────────────────
+
+    def _pane_label(self) -> str:
+        return "Partitions"
+
+    def _current_items(self) -> list[ClusterSummary]:
+        return list(self._last_sorted_rows)
+
+    def _row_tsv(self, item: ClusterSummary) -> str:
+        visible = self._visible_cols_filtered()
+        return "\t".join(self._plain_cell(item, name) for name, _ in visible)
+
+    def copy_pane(self) -> tuple[str, str, int]:
+        """Return (label, tsv_payload, row_count) for the partitions pane."""
+        visible = self._visible_cols_filtered()
+        header = "\t".join(name for name, _ in visible)
+        items = self._current_items()
+        rows = [self._row_tsv(item) for item in items]
+        payload = "\n".join([header, *rows]) + "\n"
+        return self._pane_label(), payload, len(rows)
+
     def _render_rows(self, sorted_rows: list[ClusterSummary]) -> None:
         visible = self._visible_cols_filtered()
         table = self.query_one(CyclicDataTable)

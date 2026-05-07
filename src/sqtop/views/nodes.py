@@ -277,6 +277,54 @@ class NodesView(BaseDataTableView[Node]):
         if rows and table.cursor_row < 0:
             table.move_cursor(row=0)
 
+    def _plain_cell(self, node: Node, col_name: str) -> str:
+        """Return plain (markup-free) cell text for a node column."""
+        if col_name == "NODE":
+            return node.name
+        if col_name == "STATE":
+            return node.state
+        if col_name == "CPU%":
+            try:
+                a, t = int(node.cpus_alloc), int(node.cpus_total)
+                pct = round(a / t * 100) if t else 0
+                return f"{pct}%"
+            except (ValueError, ZeroDivisionError):
+                return "N/A"
+        if col_name == "GPU%":
+            if node.gpu_total == 0:
+                return "—"
+            try:
+                pct = round(node.gpu_alloc / node.gpu_total * 100)
+                return f"{pct}%"
+            except ZeroDivisionError:
+                return "N/A"
+        if col_name == "CPUS A/T":
+            return f"{node.cpus_alloc}/{node.cpus_total}"
+        if col_name == "GPU A/T":
+            if node.gpu_total > 0:
+                return f"{node.gpu_alloc}/{node.gpu_total}"
+            return "—"
+        if col_name == "MEM FREE":
+            return f"{node.memory_free}M"
+        if col_name == "PARTITION":
+            return node.partition
+        if col_name == "MEM TOTAL":
+            return f"{node.memory_total}M"
+        if col_name == "LOAD":
+            return node.load
+        return ""
+
+    # ── Copy-pane interface ───────────────────────────────────────────────────
+
+    def _pane_label(self) -> str:
+        return "Nodes"
+
+    def _current_items(self) -> list[Node]:
+        return list(self._last_sorted_nodes)
+
+    def _row_tsv(self, item: Node) -> str:
+        return "\t".join(self._plain_cell(item, name) for name, _ in self._current_cols)
+
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         rows = self._last_sorted_nodes
         row_idx = event.cursor_row

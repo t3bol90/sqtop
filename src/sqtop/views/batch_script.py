@@ -58,3 +58,10 @@ class BatchScriptScreen(ModalScreen[None]):
         log.clear()
         log.write(self._script)
         self.refresh(layout=True)
+
+    def copy_pane(self) -> tuple[str, str, int]:
+        """Return (label, payload, line_count) for clipboard copy."""
+        text = self._script
+        label = f"Batch Script job {self._job_id}"
+        count = len(text.splitlines())
+        return label, text, count
