@@ -48,6 +48,9 @@ _DEFAULTS: dict = {
         "jobs_hidden": [],
         "nodes_hidden": [],
         "partitions_hidden": [],
+        "jobs_order": [],
+        "nodes_order": [],
+        "partitions_order": [],
     },
     "notifications": {
         "desktop_enabled": True,
@@ -120,7 +123,10 @@ def load() -> dict:
         if isinstance(data.get("columns"), dict):
             for k, v in data["columns"].items():
                 if isinstance(v, list):
-                    columns[k] = v
+                    if k.endswith("_order"):
+                        columns[k] = [x for x in v if isinstance(x, str)]
+                    else:
+                        columns[k] = v
         cfg["columns"] = columns
         notifications = dict(_DEFAULTS["notifications"])
         if isinstance(data.get("notifications"), dict):
@@ -205,6 +211,9 @@ def _write(cfg: dict) -> None:
     jobs_hidden = list(columns.get("jobs_hidden", []))
     nodes_hidden = list(columns.get("nodes_hidden", []))
     partitions_hidden = list(columns.get("partitions_hidden", []))
+    jobs_order = [x for x in columns.get("jobs_order", []) if isinstance(x, str)]
+    nodes_order = [x for x in columns.get("nodes_order", []) if isinstance(x, str)]
+    partitions_order = [x for x in columns.get("partitions_order", []) if isinstance(x, str)]
 
     desktop_enabled = bool(notifications.get("desktop_enabled", _DEFAULTS["notifications"]["desktop_enabled"]))
 
@@ -257,6 +266,9 @@ def _write(cfg: dict) -> None:
         f"jobs_hidden = {_toml_str_list(jobs_hidden)}",
         f"nodes_hidden = {_toml_str_list(nodes_hidden)}",
         f"partitions_hidden = {_toml_str_list(partitions_hidden)}",
+        f"jobs_order = {_toml_str_list(jobs_order)}",
+        f"nodes_order = {_toml_str_list(nodes_order)}",
+        f"partitions_order = {_toml_str_list(partitions_order)}",
         "",
         "[notifications]",
         f'desktop_enabled = {"true" if desktop_enabled else "false"}',
