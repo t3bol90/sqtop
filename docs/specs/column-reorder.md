@@ -115,8 +115,8 @@ Semantics:
 - The "column under the data cursor" is determined from the table's current cursor column index, mapped back to the column name via `_current_cols[cursor_column].name`.
 - A shift swaps that column with its left/right neighbor in `_column_order`, then triggers `_rebuild_columns(force=True)` and a `_render_rows(...)`.
 - Cursor follows the moved column: after a shift, the cursor remains on the same column (now at the new index). The data row under the cursor does not change.
-- Shifting the leftmost column further left, or rightmost further right, is a no-op (no wrap). Wrapping a column from one edge to the other is a deliberately bigger gesture and should be done with mouse drag.
-- Hidden columns are not skipped: `ctrl+shift+left` swaps with the immediate neighbor in `_column_order`, including hidden ones. The user observes the visible column "jumping over" a hidden slot, which is the correct semantics — the hidden column does still occupy a position.
+- Shifting the leftmost-visible column further left, or rightmost-visible further right, is a no-op (no wrap). Wrapping a column from one edge to the other is a deliberately bigger gesture and should be done with mouse drag.
+- Hidden columns are skipped when locating the swap neighbor. `ctrl+shift+left` swaps with the *next visible* column to the left, even if hidden columns sit between them in `_column_order`. Rationale: a press that produced no visible movement (because the immediate neighbor was hidden) felt broken in early prototyping; users perceive hidden columns as not occupying a position.
 
 Why `ctrl+shift+arrow` and not unshifted arrows: arrows are already cursor movement inside `DataTable`, and `shift+arrow` is reserved for visual-mode selection extension (`copy.md` §4.1). `ctrl+shift+arrow` is unambiguous and matches the mental model of "structural move" used by tiling window managers and editors (e.g. tmux `prefix + {`/`}` for swap, vscode `alt+up`/`alt+down` for move-line).
 

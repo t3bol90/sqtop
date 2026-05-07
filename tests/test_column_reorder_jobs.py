@@ -1,30 +1,8 @@
-"""Tests for JobsView column reorder (Agent C implementation).
-
-Tests 1-4 and 6-7 require _reconcile_order from ..columns (Agent A) and
-CyclicDataTable.ColumnReordered from ..views.widgets (Agent B).  Until those
-land on main, importing sqtop.views.jobs will raise ImportError.  The tests
-are written against the real imports; they will be skipped automatically when
-the dependency is missing so the CI result is informative rather than a hard
-failure.
-"""
+"""Tests for JobsView column reorder."""
 from __future__ import annotations
 
-import pytest
-
-# ---------------------------------------------------------------------------
-# Optional import guard – allows running the file in this worktree where
-# Agent A's columns.py does not yet exist.
-# ---------------------------------------------------------------------------
-try:
-    from sqtop.views.jobs import JobsView, COLUMNS
-    from sqtop import config
-    _IMPORT_OK = True
-except ImportError:
-    _IMPORT_OK = False
-
-pytestmark = pytest.mark.skipif(
-    not _IMPORT_OK, reason="sqtop.columns (_reconcile_order) not yet available"
-)
+from sqtop.views.jobs import JobsView, COLUMNS
+from sqtop import config
 
 
 # ---------------------------------------------------------------------------

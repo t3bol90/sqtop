@@ -299,28 +299,28 @@ class NodesView(BaseDataTableView[Node]):
         """Handle mouse-drag column reorder from CyclicDataTable.ColumnReordered."""
         from_vis = event.from_index
         to_vis = event.to_index
-        if from_vis == to_vis:
-            return
 
         visible_names = [name for name, _ in self._current_cols]
+        if not visible_names:
+            return
         if from_vis < 0 or from_vis >= len(visible_names):
             return
-        if to_vis < 0 or to_vis >= len(visible_names):
-            return
+        # Clamp to_vis into [0, len(visible_names)] — past-rightmost means append.
+        to_vis = max(0, min(to_vis, len(visible_names)))
 
-        # Translate visible indices to absolute positions in _column_order
-        from_name = visible_names[from_vis]
-        to_name = visible_names[to_vis]
-        from_abs = self._column_order.index(from_name)
+        moved_name = visible_names[from_vis]
+        self._column_order.remove(moved_name)
 
-        # Remove from_name from its current absolute position
-        self._column_order.pop(from_abs)
-        # Recompute to position after removal
-        to_abs_new = self._column_order.index(to_name)
-        # If dragging forward (to_vis > from_vis), insert after the target;
-        # if dragging backward, insert before the target.
-        insert_pos = to_abs_new + 1 if to_vis > from_vis else to_abs_new
-        self._column_order.insert(insert_pos, from_name)
+        if to_vis >= len(visible_names):
+            self._column_order.append(moved_name)
+        else:
+            updated_visible = [n for n in visible_names if n != moved_name]
+            if to_vis >= len(updated_visible):
+                self._column_order.append(moved_name)
+            else:
+                anchor_name = updated_visible[to_vis]
+                anchor_abs = self._column_order.index(anchor_name)
+                self._column_order.insert(anchor_abs, moved_name)
 
         self._persist_column_order()
         state = self._capture_table_state()
