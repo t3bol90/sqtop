@@ -24,6 +24,7 @@ from ..slurm import (
     run_attach_command,
 )
 from .. import config
+from ..columns import _reconcile_order
 from ..responsive import (
     ColumnSpec,
     CHROME_OVERHEAD,
@@ -229,6 +230,8 @@ class JobsView(BaseDataTableView[Job]):
         Binding("s", "sort_state", show=False),
         Binding("t", "sort_time", show=False),
         Binding("c", "sort_cpus", show=False),
+        Binding("ctrl+shift+left",  "shift_column_left",  show=False),
+        Binding("ctrl+shift+right", "shift_column_right", show=False),
         Binding("y", "yank", "Copy", show=False),
         Binding("Y", "yank_row", "Copy row", show=False),
         Binding("v", "visual_enter", "Visual", show=False),
@@ -282,6 +285,9 @@ class JobsView(BaseDataTableView[Job]):
             self._sort_col = saved_sort
             self._sort_reversed = bool(view_state.get("jobs_sort_reversed", False))
         self._hidden_cols: set[str] = set(cfg_all.get("columns", {}).get("jobs_hidden", []))
+        saved_order = list(cfg_all.get("columns", {}).get("jobs_order", []))
+        default_order = [c.name for c in COLUMNS]
+        self._column_order: list[str] = _reconcile_order(saved_order, default_order)
         self._warn_pending_ratio = float(cfg_all.get("health", {}).get("warn_pending_ratio", 0.7))
         self._desktop_notify_enabled = bool(
             cfg_all.get("notifications", {}).get("desktop_enabled", True)
@@ -371,18 +377,25 @@ class JobsView(BaseDataTableView[Job]):
         return "\t".join(self._plain_cell(item, name) for name, _ in self._current_cols)
 
     def _make_columns(self) -> list[ColumnSpec]:
-        """Build ColumnSpec list with config-overridden content_max values."""
-        return [
-            ColumnSpec(
-                col.name,
-                col.min_width,
-                self._col_max.get(col.name, col.content_max),
-                col.priority,
-                col.min_tier,
+        """Build ColumnSpec list respecting _column_order and _hidden_cols."""
+        col_lookup = {c.name: c for c in COLUMNS}
+        result = []
+        for name in self._column_order:
+            col = col_lookup.get(name)
+            if col is None:
+                continue
+            if name in self._hidden_cols:
+                continue
+            result.append(
+                ColumnSpec(
+                    col.name,
+                    col.min_width,
+                    self._col_max.get(col.name, col.content_max),
+                    col.priority,
+                    col.min_tier,
+                )
             )
-            for col in COLUMNS
-            if col.name not in self._hidden_cols
-        ]
+        return result
 
     def _visible_cols_filtered(self, width: int) -> list[tuple[str, int]]:
         """Legacy helper kept for NodesView-style callers; uses allocate_columns."""
@@ -493,6 +506,110 @@ class JobsView(BaseDataTableView[Job]):
     def action_sort_cpus(self) -> None:
         self._set_sort("cpus")
 
+    def _persist_column_order(self) -> None:
+        config.update({"columns": {"jobs_order": list(self._column_order)}})
+
+    def _shift_visible_column(self, direction: int) -> None:
+        """Shift the column under the cursor left (-1) or right (+1) in _column_order.
+
+        Operates in visible-column space for the cursor, then translates to the
+        absolute _column_order index for the swap.
+        """
+        table = self.query_one(CyclicDataTable)
+        vis_idx = table.cursor_column
+        visible_names = [name for name, _ in self._current_cols]
+        if not visible_names:
+            return
+        vis_idx = max(0, min(vis_idx, len(visible_names) - 1))
+        name = visible_names[vis_idx]
+
+        abs_idx = self._column_order.index(name)
+        target_idx = abs_idx + direction
+
+        # Walk past hidden columns to find the real neighbour in _column_order.
+        # We only want to swap with another visible column.
+        visible_set = set(visible_names)
+        if direction < 0:
+            # Find the nearest lower abs_idx that is visible.
+            candidate = abs_idx - 1
+            while candidate >= 0 and self._column_order[candidate] not in visible_set:
+                candidate -= 1
+            if candidate < 0:
+                return  # already at the leftmost visible column
+            target_idx = candidate
+        else:
+            # Find the nearest higher abs_idx that is visible.
+            candidate = abs_idx + 1
+            while candidate < len(self._column_order) and self._column_order[candidate] not in visible_set:
+                candidate += 1
+            if candidate >= len(self._column_order):
+                return  # already at the rightmost visible column
+            target_idx = candidate
+
+        # Perform the swap in _column_order.
+        self._column_order[abs_idx], self._column_order[target_idx] = (
+            self._column_order[target_idx],
+            self._column_order[abs_idx],
+        )
+        self._persist_column_order()
+
+        # Rebuild columns and re-render.
+        state = self._capture_table_state()
+        self._rebuild_columns(self.size.width, self._last_jobs, force=True)
+        self._render_rows(self._last_jobs)
+
+        # Re-position cursor onto the moved column's NEW visible index.
+        new_visible_names = [n for n, _ in self._current_cols]
+        try:
+            new_vis_idx = new_visible_names.index(name)
+        except ValueError:
+            new_vis_idx = vis_idx
+        table.move_cursor(column=new_vis_idx, row=state[0])
+
+    def action_shift_column_left(self) -> None:
+        self._shift_visible_column(-1)
+
+    def action_shift_column_right(self) -> None:
+        self._shift_visible_column(1)
+
+    def on_cyclic_data_table_column_reordered(self, event) -> None:
+        """Handle mouse drag column reorder from CyclicDataTable.ColumnReordered."""
+        from_vis = event.from_index
+        to_vis = event.to_index
+        visible_names = [name for name, _ in self._current_cols]
+        if not visible_names:
+            return
+
+        from_vis = max(0, min(from_vis, len(visible_names) - 1))
+        # Clamp to_vis; if >= len(visible_names), append at end.
+        to_vis = max(0, min(to_vis, len(visible_names)))
+
+        if from_vis >= len(visible_names):
+            return
+
+        moved_name = visible_names[from_vis]
+
+        # Remove from _column_order.
+        self._column_order.remove(moved_name)
+
+        if to_vis >= len(visible_names):
+            # Append at the end of _column_order.
+            self._column_order.append(moved_name)
+        else:
+            # Determine the absolute index corresponding to to_vis in the
+            # updated visible_names (after removal).
+            updated_visible = [n for n in visible_names if n != moved_name]
+            if to_vis >= len(updated_visible):
+                self._column_order.append(moved_name)
+            else:
+                anchor_name = updated_visible[to_vis]
+                anchor_abs = self._column_order.index(anchor_name)
+                self._column_order.insert(anchor_abs, moved_name)
+
+        self._persist_column_order()
+        self._rebuild_columns(self.size.width, self._last_jobs, force=True)
+        self._render_rows(self._last_jobs)
+
     def action_yank(self) -> None:
         """Dispatch: visual yank when in visual mode, otherwise yank job id."""
         if self._visual_active:
@@ -568,6 +685,9 @@ class JobsView(BaseDataTableView[Job]):
     def _reload_column_visibility(self) -> None:
         cfg = config.load()
         self._hidden_cols = set(cfg.get("columns", {}).get("jobs_hidden", []))
+        saved_order = list(cfg.get("columns", {}).get("jobs_order", []))
+        default_order = [c.name for c in COLUMNS]
+        self._column_order = _reconcile_order(saved_order, default_order)
         self._rebuild_columns(self.size.width, self._last_jobs, force=True)
         self._render_rows(self._last_jobs)
 
