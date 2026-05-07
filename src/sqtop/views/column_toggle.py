@@ -9,8 +9,12 @@ from textual.widgets import Button, Checkbox, Label, Static
 from .. import config
 
 
-class ColumnToggleScreen(ModalScreen[None]):
-    """Modal with checkboxes to toggle column visibility."""
+class ColumnToggleScreen(ModalScreen[tuple[str, str] | None]):
+    """Modal with checkboxes to toggle column visibility.
+
+    Dismisses with ``None`` on close, or ``("reset", view_name)`` when the
+    user clicks "Reset to default order".
+    """
 
     BINDINGS = [
         Binding("escape", "dismiss(None)", show=False),
@@ -27,20 +31,37 @@ class ColumnToggleScreen(ModalScreen[None]):
     }
     #col-title { text-style: bold; color: $primary; margin-bottom: 1; }
     Checkbox { margin-top: 0; }
+    #btn-col-reset { width: 100%; margin-top: 1; }
     #btn-col-close { width: 100%; margin-top: 1; }
     """
 
-    def __init__(self, view_name: str, all_columns: list[str], hidden_columns: list[str]) -> None:
+    def __init__(
+        self,
+        view_name: str,
+        all_columns: list[str],
+        hidden_columns: list[str],
+        column_order: list[str] | None = None,
+    ) -> None:
         super().__init__()
         self._view_name = view_name
         self._all_columns = all_columns
         self._hidden: set[str] = set(hidden_columns)
+        # If column_order provided, use it to sort the checkboxes; else fall back
+        # to all_columns order (backwards-compatible for callers that don't pass it).
+        if column_order is not None:
+            col_set = set(all_columns)
+            ordered = [c for c in column_order if c in col_set]
+            remaining = [c for c in all_columns if c not in set(ordered)]
+            self._display_order: list[str] = ordered + remaining
+        else:
+            self._display_order = list(all_columns)
 
     def compose(self) -> ComposeResult:
         with Static(id="col-dialog"):
             yield Label(f"Column visibility — {self._view_name}", id="col-title")
-            for col in self._all_columns:
-                yield Checkbox(col, value=(col not in self._hidden), id=f"col-{self._all_columns.index(col)}")
+            for col in self._display_order:
+                yield Checkbox(col, value=(col not in self._hidden), id=f"col-{self._display_order.index(col)}")
+            yield Button("Reset to default order", id="btn-col-reset", variant="default")
             yield Button("Close  [dim]esc[/]", id="btn-col-close", variant="default")
 
     def on_checkbox_changed(self, event: Checkbox.Changed) -> None:
@@ -53,4 +74,7 @@ class ColumnToggleScreen(ModalScreen[None]):
         config.update({"columns": {f"{self._view_name}_hidden": list(self._hidden)}})
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        self.dismiss(None)
+        if event.button.id == "btn-col-reset":
+            self.dismiss(("reset", self._view_name))
+        else:
+            self.dismiss(None)

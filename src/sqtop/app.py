@@ -316,6 +316,7 @@ class SqtopApp(App):
     def action_column_toggle(self) -> None:
         active = self.query_one(TabbedContent).active
         cfg = config.load()
+        column_order = None
         if active == "jobs":
             view = self.query_one(JobsView)
             all_cols = [col.name for col in JOBS_COLUMNS]
@@ -324,6 +325,7 @@ class SqtopApp(App):
             view = self.query_one(NodesView)
             all_cols = [col.name for col in NODES_COLUMNS]
             hidden = list(cfg.get("columns", {}).get("nodes_hidden", []))
+            column_order = list(view._column_order)
         elif active == "partitions":
             view = self.query_one(PartitionsView)
             all_cols = [col.name for col in PARTITIONS_COLUMNS]
@@ -332,9 +334,22 @@ class SqtopApp(App):
             return
 
         def _make_callback(v):
-            return lambda _: v._reload_column_visibility()
+            def _callback(result: tuple[str, str] | None) -> None:
+                if result is not None and result[0] == "reset":
+                    # Reset column order for nodes view
+                    if isinstance(v, NodesView):
+                        v._column_order = [c.name for c in NODES_COLUMNS]
+                        config.update({"columns": {"nodes_order": []}})
+                        v._rebuild_columns(v.size.width, force=True)
+                        v._render_rows(v._last_sorted_nodes)
+                    return
+                v._reload_column_visibility()
+            return _callback
 
-        self.push_screen(ColumnToggleScreen(active, all_cols, hidden), _make_callback(view))
+        self.push_screen(
+            ColumnToggleScreen(active, all_cols, hidden, column_order=column_order),
+            _make_callback(view),
+        )
 
     def action_show_keybindings(self) -> None:
         pane_name = "Jobs"
