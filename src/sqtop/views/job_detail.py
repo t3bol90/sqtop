@@ -6,10 +6,11 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import ModalScreen
 from textual.containers import ScrollableContainer
-from textual.widgets import Label, Static
+from textual.widgets import Label, Static, TextArea
 
 from .detail import DetailView
 from ..slurm import fetch_job_efficiency
+from ..clipboard import app_copy
 
 _TERMINAL_STATES = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "OUT_OF_MEMORY"}
 _BAR_WIDTH = 10
@@ -45,6 +46,9 @@ class JobDetailScreen(ModalScreen[None]):
     BINDINGS = [
         Binding("escape", "dismiss(None)", show=False),
         Binding("q", "dismiss(None)", "Close", show=True),
+        Binding("y", "copy_selection_or_all", show=False),
+        Binding("ctrl+c", "copy_selection_or_all", show=False),
+        Binding("v", "noop", show=False),
     ]
 
     CSS = """
@@ -110,12 +114,19 @@ class JobDetailScreen(ModalScreen[None]):
     def _hide_efficiency(self) -> None:
         self.query_one("#job-detail-efficiency", Static).display = False
 
+    def action_copy_selection_or_all(self) -> None:
+        ta = self.query_one(DetailView).query_one(TextArea)
+        text = ta.selected_text or ta.text
+        app_copy(self.app, text, label="JobDetail", count=len(text.splitlines()))
+
+    def action_noop(self) -> None:
+        pass
+
     def copy_pane(self) -> tuple[str, str, int]:
-        """Return (label, payload, line_count) for clipboard copy."""
+        """Return (label, payload, line_count) for ctrl+shift+y."""
         try:
             text = self.query_one("#job-detail-view", DetailView).plain_text()
         except Exception:
             text = "\n".join(f"{k}: {v}" for k, v in self._data.items())
         label = f"Job {self._job_id} Detail"
-        count = len(text.splitlines())
-        return label, text, count
+        return label, text, len(text.splitlines())

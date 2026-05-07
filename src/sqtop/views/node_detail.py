@@ -5,10 +5,11 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import ModalScreen
 from textual.containers import ScrollableContainer
-from textual.widgets import Label, Static
+from textual.widgets import Label, Static, TextArea
 from textual import work
 
 from ..slurm import Node, fetch_node_detail
+from ..clipboard import app_copy
 from .detail import DetailView
 
 
@@ -18,6 +19,9 @@ class NodeDetailScreen(ModalScreen[None]):
     BINDINGS = [
         Binding("escape", "dismiss(None)", show=False),
         Binding("q", "dismiss(None)", "Close", show=True),
+        Binding("y", "copy_selection_or_all", show=False),
+        Binding("ctrl+c", "copy_selection_or_all", show=False),
+        Binding("v", "noop", show=False),
     ]
 
     CSS = """
@@ -68,13 +72,19 @@ class NodeDetailScreen(ModalScreen[None]):
         self._detail_data = data
         self.query_one("#node-detail-view", DetailView).show_node(data)
 
+    def action_copy_selection_or_all(self) -> None:
+        ta = self.query_one(DetailView).query_one(TextArea)
+        text = ta.selected_text or ta.text
+        app_copy(self.app, text, label="NodeDetail", count=len(text.splitlines()))
+
+    def action_noop(self) -> None:
+        pass
+
     def copy_pane(self) -> tuple[str, str, int]:
-        """Return (label, payload, line_count) for clipboard copy."""
+        """Return (label, payload, line_count) for ctrl+shift+y."""
         try:
             text = self.query_one("#node-detail-view", DetailView).plain_text()
         except Exception:
-            data = getattr(self, "_detail_data", {})
-            text = "\n".join(f"{k}: {v}" for k, v in data.items())
+            text = "\n".join(f"{k}: {v}" for k, v in self._detail_data.items())
         label = f"Node {self._node.name} Detail"
-        count = len(text.splitlines())
-        return label, text, count
+        return label, text, len(text.splitlines())

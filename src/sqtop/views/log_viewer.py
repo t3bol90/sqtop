@@ -10,6 +10,7 @@ from textual.widgets import Label, RichLog, Static
 from textual import work
 
 from ..slurm import tail_log_file
+from ..clipboard import app_copy
 
 LOG_STDOUT = "stdout"
 LOG_STDERR = "stderr"
@@ -22,6 +23,8 @@ class LogViewerScreen(ModalScreen[None]):
         Binding("escape", "dismiss", show=False),
         Binding("q", "dismiss", show=False),
         Binding("f", "toggle_follow", "Follow"),
+        Binding("y", "copy_selection_or_all", show=False),
+        Binding("ctrl+c", "copy_selection_or_all", show=False),
     ]
 
     CSS = """
@@ -86,9 +89,12 @@ class LogViewerScreen(ModalScreen[None]):
         log.clear()
         log.write(content)
 
+    def action_copy_selection_or_all(self) -> None:
+        text = self._last_content
+        app_copy(self.app, text, label="Log", count=len(text.splitlines()))
+
     def copy_pane(self) -> tuple[str, str, int]:
-        """Return (label, payload, line_count) for clipboard copy."""
+        """Return (label, payload, line_count) for ctrl+shift+y."""
         text = self._last_content
         label = f"Log {self._log_type} job {self._job_id}"
-        count = len(text.splitlines())
-        return label, text, count
+        return label, text, len(text.splitlines())

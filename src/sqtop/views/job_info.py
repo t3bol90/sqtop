@@ -2,14 +2,22 @@
 
 from __future__ import annotations
 
+import re
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import ModalScreen
 from textual.containers import ScrollableContainer
-from textual.widgets import Label, Static
+from textual.widgets import Label, Static, TextArea
 from textual import work
 
 from ..slurm import Job, fetch_job_detail, fetch_job_dependencies
+from ..clipboard import app_copy
+
+
+def _strip_rich(markup: str) -> str:
+    """Strip Rich markup tags to produce plain text."""
+    return re.sub(r"\[/?[^\[\]]*\]", "", markup)
 
 
 class JobInfoScreen(ModalScreen[None]):
@@ -18,6 +26,9 @@ class JobInfoScreen(ModalScreen[None]):
     BINDINGS = [
         Binding("escape", "dismiss(None)", show=False),
         Binding("q", "dismiss(None)", "Close", show=True),
+        Binding("y", "copy_selection_or_all", show=False),
+        Binding("ctrl+c", "copy_selection_or_all", show=False),
+        Binding("v", "noop", show=False),
     ]
 
     CSS = """
@@ -42,6 +53,9 @@ class JobInfoScreen(ModalScreen[None]):
     }
     #job-info-content {
         width: 100%;
+        height: 1fr;
+        background: $surface;
+        border: none;
     }
     """
 
@@ -57,7 +71,7 @@ class JobInfoScreen(ModalScreen[None]):
         with Static(id="job-info-dialog"):
             yield Label(header, id="job-info-title")
             with ScrollableContainer(id="job-info-scroll"):
-                yield Static("Loading...", id="job-info-content")
+                yield TextArea("Loading...", id="job-info-content", read_only=True)
 
     def on_mount(self) -> None:
         self._load_job_info()
@@ -73,7 +87,8 @@ class JobInfoScreen(ModalScreen[None]):
             deps = fetch_job_dependencies(job.job_id)
 
         markup = self._build_markup(job, detail, deps)
-        self.app.call_from_thread(self._update_content, markup)
+        plain = _strip_rich(markup)
+        self.app.call_from_thread(self._update_content, plain)
 
     def _build_markup(self, job: Job, detail: dict[str, str], deps: list) -> str:
         lines: list[str] = []
@@ -181,15 +196,19 @@ class JobInfoScreen(ModalScreen[None]):
         color = colors.get(state, "white")
         return f"[{color}]{state}[/{color}]"
 
-    def _update_content(self, markup: str) -> None:
-        self._markup_text = markup
-        self.query_one("#job-info-content", Static).update(markup)
+    def _update_content(self, text: str) -> None:
+        self.query_one("#job-info-content", TextArea).load_text(text)
+
+    def action_copy_selection_or_all(self) -> None:
+        ta = self.query_one(TextArea)
+        text = ta.selected_text or ta.text
+        app_copy(self.app, text, label="JobInfo", count=len(text.splitlines()))
+
+    def action_noop(self) -> None:
+        pass
 
     def copy_pane(self) -> tuple[str, str, int]:
-        """Return (label, payload, line_count) for clipboard copy."""
-        # Strip Rich markup tags for a plain-text copy
-        import re
-        text = re.sub(r"\[/?[^\[\]]*\]", "", getattr(self, "_markup_text", ""))
+        """Return (label, payload, line_count) for ctrl+shift+y."""
+        text = self.query_one("#job-info-content", TextArea).text
         label = f"Job {self._job.job_id} Info"
-        count = len(text.splitlines())
-        return label, text, count
+        return label, text, len(text.splitlines())

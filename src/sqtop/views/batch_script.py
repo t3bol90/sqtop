@@ -5,16 +5,20 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.screen import ModalScreen
 from textual.containers import Vertical
-from textual.widgets import Label, RichLog
+from textual.widgets import Label, TextArea
 from textual import work
 
 from ..slurm import fetch_batch_script
+from ..clipboard import app_copy
 
 
 class BatchScriptScreen(ModalScreen[None]):
     BINDINGS = [
         Binding("escape", "dismiss", show=False),
         Binding("q", "dismiss", show=False),
+        Binding("y", "copy_selection_or_all", show=False),
+        Binding("ctrl+c", "copy_selection_or_all", show=False),
+        Binding("v", "noop", show=False),
     ]
     CSS = """
     BatchScriptScreen { align: center middle; }
@@ -39,7 +43,7 @@ class BatchScriptScreen(ModalScreen[None]):
                 f"[b]batch script[/b]  job {self._job_id}  [dim]esc=close[/]",
                 id="batch-header",
             )
-            yield RichLog(id="batch-output", highlight=True, markup=False, wrap=False)
+            yield TextArea("", id="batch-output", read_only=True)
 
     def on_mount(self) -> None:
         self.call_after_refresh(self.fetch_script)
@@ -51,17 +55,18 @@ class BatchScriptScreen(ModalScreen[None]):
 
     def _display(self, content: str) -> None:
         self._script = content
-        self.call_after_refresh(self._write)
+        self.query_one("#batch-output", TextArea).load_text(content)
 
-    def _write(self) -> None:
-        log = self.query_one("#batch-output", RichLog)
-        log.clear()
-        log.write(self._script)
-        self.refresh(layout=True)
+    def action_copy_selection_or_all(self) -> None:
+        ta = self.query_one(TextArea)
+        text = ta.selected_text or ta.text
+        app_copy(self.app, text, label="BatchScript", count=len(text.splitlines()))
+
+    def action_noop(self) -> None:
+        pass
 
     def copy_pane(self) -> tuple[str, str, int]:
-        """Return (label, payload, line_count) for clipboard copy."""
+        """Return (label, payload, line_count) for ctrl+shift+y."""
         text = self._script
         label = f"Batch Script job {self._job_id}"
-        count = len(text.splitlines())
-        return label, text, count
+        return label, text, len(text.splitlines())

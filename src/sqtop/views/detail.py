@@ -2,20 +2,36 @@
 
 from __future__ import annotations
 
+import re
+
 from textual.app import ComposeResult
-from textual.widgets import Static
-from rich.table import Table
-from rich.console import Console
-from rich.text import Text
+from textual.widget import Widget
+from textual.widgets import TextArea
 
 
-class DetailView(Static):
-    """Renders key=value pairs from scontrol in a formatted panel."""
+def _strip_rich(markup: str) -> str:
+    """Strip Rich markup tags to produce plain text."""
+    return re.sub(r"\[/?[^\[\]]*\]", "", markup)
 
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self._plain_data: dict[str, str] = {}
-        self._plain_title: str = ""
+
+class DetailView(Widget):
+    """Renders key=value pairs from scontrol in a read-only TextArea."""
+
+    DEFAULT_CSS = """
+    DetailView {
+        height: 1fr;
+        width: 100%;
+    }
+    DetailView TextArea {
+        height: 1fr;
+        width: 100%;
+        background: $surface;
+        border: none;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield TextArea("", read_only=True)
 
     def show_job(self, data: dict[str, str]) -> None:
         self._render_kv("Job Detail", data, highlight_keys={
@@ -38,17 +54,12 @@ class DetailView(Static):
         data: dict[str, str],
         highlight_keys: set[str],
     ) -> None:
-        self._plain_title = title
-        self._plain_data = dict(data)
-        lines = [f"[bold underline]{title}[/]\n"]
+        lines = [f"{title}\n"]
         for k, v in data.items():
-            key_style = "bold cyan" if k in highlight_keys else "dim"
-            lines.append(f"  [{key_style}]{k}[/]: {v}")
-        self.update("\n".join(lines))
+            lines.append(f"  {k}: {v}")
+        text = "\n".join(lines)
+        self.query_one(TextArea).load_text(text)
 
     def plain_text(self) -> str:
-        """Return the detail content as plain text (no markup)."""
-        lines = [self._plain_title, ""]
-        for k, v in self._plain_data.items():
-            lines.append(f"  {k}: {v}")
-        return "\n".join(lines)
+        """Return the current plain-text content."""
+        return self.query_one(TextArea).text
