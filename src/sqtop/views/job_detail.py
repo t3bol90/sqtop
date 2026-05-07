@@ -11,6 +11,7 @@ from textual.widgets import Label, Static, TextArea
 from .detail import DetailView
 from ..slurm import fetch_job_efficiency
 from ..clipboard import app_copy
+from ..responsive import Tier
 
 _TERMINAL_STATES = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "OUT_OF_MEMORY"}
 _BAR_WIDTH = 10
@@ -54,10 +55,16 @@ class JobDetailScreen(ModalScreen[None]):
     CSS = """
     JobDetailScreen { align: center middle; }
     #job-detail-dialog {
-        width: 90%; height: 80%;
+        width: 90%; height: 85%;
+        min-width: 60; max-width: 140;
+        min-height: 20; max-height: 50;
         border: double $primary;
         background: $surface;
         padding: 0;
+    }
+    JobDetailScreen.clamp-xs #job-detail-dialog {
+        width: 100%; height: 100%;
+        min-width: 0; min-height: 0;
     }
     #job-detail-title {
         text-style: bold;
@@ -80,6 +87,9 @@ class JobDetailScreen(ModalScreen[None]):
         super().__init__()
         self._job_id = job_id
         self._data = data
+
+    def responsive_clamp(self, tier: Tier) -> None:
+        self.add_class(f"clamp-{tier}")
 
     def compose(self) -> ComposeResult:
         name = self._data.get("JobName", "")

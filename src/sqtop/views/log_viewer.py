@@ -11,6 +11,7 @@ from textual import work
 
 from ..slurm import tail_log_file
 from ..clipboard import app_copy
+from ..responsive import Tier
 
 LOG_STDOUT = "stdout"
 LOG_STDERR = "stderr"
@@ -30,10 +31,16 @@ class LogViewerScreen(ModalScreen[None]):
     CSS = """
     LogViewerScreen { align: center middle; }
     #log-dialog {
-        width: 90%; height: 80%;
+        width: 90%; height: 85%;
+        min-width: 60; max-width: 140;
+        min-height: 20; max-height: 50;
         border: double $primary;
         background: $surface;
         padding: 0 1;
+    }
+    LogViewerScreen.clamp-xs #log-dialog {
+        width: 100%; height: 100%;
+        min-width: 0; min-height: 0;
     }
     #log-header { height: 1; background: $panel; padding: 0 1; }
     #log-output { height: 1fr; }
@@ -48,6 +55,9 @@ class LogViewerScreen(ModalScreen[None]):
         self._timer = None
         self._fetch_lock = threading.Lock()
         self._last_content: str = ""
+
+    def responsive_clamp(self, tier: Tier) -> None:
+        self.add_class(f"clamp-{tier}")
 
     def compose(self) -> ComposeResult:
         with Static(id="log-dialog"):

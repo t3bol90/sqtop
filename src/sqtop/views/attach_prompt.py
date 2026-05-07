@@ -17,7 +17,7 @@ class AttachNodePromptScreen(ModalScreen[str | None]):
     CSS = """
     AttachNodePromptScreen { align: center middle; }
     #attach-dialog {
-        width: 60; height: auto;
+        width: 60; max-width: 90%; height: auto;
         border: double $primary;
         background: $surface;
         padding: 1 2;

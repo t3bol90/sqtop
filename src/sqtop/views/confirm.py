@@ -19,7 +19,7 @@ class ConfirmScreen(ModalScreen[bool]):
     CSS = """
     ConfirmScreen { align: center middle; }
     #confirm-dialog {
-        width: 50; height: auto;
+        width: 50; max-width: 90%; height: auto;
         border: double $warning;
         background: $surface;
         padding: 1 2;

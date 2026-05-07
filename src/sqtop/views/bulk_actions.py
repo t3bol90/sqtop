@@ -20,7 +20,7 @@ class BulkActionScreen(ModalButtonNavMixin, ModalScreen[str | None]):
     CSS = """
     BulkActionScreen { align: center middle; }
     #bulk-dialog {
-        width: 52; height: auto;
+        width: 52; max-width: 90%; height: auto;
         border: double $primary;
         background: $surface;
         padding: 1 2;

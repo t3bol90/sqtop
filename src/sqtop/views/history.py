@@ -56,7 +56,7 @@ class HistoryActionScreen(ModalButtonNavMixin, ModalScreen[str | None]):
     CSS = """
     HistoryActionScreen { align: center middle; }
     #dialog {
-        width: 50; height: auto;
+        width: 50; max-width: 90%; height: auto;
         border: double $primary;
         background: $surface;
         padding: 1 2;

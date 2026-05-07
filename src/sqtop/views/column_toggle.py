@@ -20,7 +20,7 @@ class ColumnToggleScreen(ModalScreen[None]):
     CSS = """
     ColumnToggleScreen { align: center middle; }
     #col-dialog {
-        width: 40; height: auto;
+        width: 40; max-width: 90%; height: auto;
         border: double $primary;
         background: $surface;
         padding: 1 2;

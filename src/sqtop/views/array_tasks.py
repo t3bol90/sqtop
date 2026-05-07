@@ -9,6 +9,7 @@ from textual.worker import Worker, WorkerState
 
 from ..slurm import Job, fetch_array_tasks
 from .widgets import CyclicDataTable
+from ..responsive import Tier
 
 STATE_COLORS = {
     "RUNNING":   "green",
@@ -33,10 +34,16 @@ class ArrayTaskScreen(ModalScreen[None]):
     CSS = """
     ArrayTaskScreen { align: center middle; }
     #array-task-dialog {
-        width: 90%; height: 80%;
+        width: 90%; height: 85%;
+        min-width: 60; max-width: 140;
+        min-height: 20; max-height: 50;
         border: double $primary;
         background: $surface;
         padding: 0;
+    }
+    ArrayTaskScreen.clamp-xs #array-task-dialog {
+        width: 100%; height: 100%;
+        min-width: 0; min-height: 0;
     }
     #array-task-title {
         text-style: bold;
@@ -58,6 +65,9 @@ class ArrayTaskScreen(ModalScreen[None]):
     def __init__(self, job: Job) -> None:
         super().__init__()
         self._job = job
+
+    def responsive_clamp(self, tier: Tier) -> None:
+        self.add_class(f"clamp-{tier}")
 
     def compose(self) -> ComposeResult:
         with Static(id="array-task-dialog"):

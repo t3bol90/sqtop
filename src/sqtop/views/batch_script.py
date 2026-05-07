@@ -10,6 +10,7 @@ from textual import work
 
 from ..slurm import fetch_batch_script
 from ..clipboard import app_copy
+from ..responsive import Tier
 
 
 class BatchScriptScreen(ModalScreen[None]):
@@ -23,10 +24,16 @@ class BatchScriptScreen(ModalScreen[None]):
     CSS = """
     BatchScriptScreen { align: center middle; }
     #batch-dialog {
-        width: 90%; height: 80%;
+        width: 90%; height: 85%;
+        min-width: 60; max-width: 140;
+        min-height: 20; max-height: 50;
         border: double $primary;
         background: $surface;
         padding: 0 1;
+    }
+    BatchScriptScreen.clamp-xs #batch-dialog {
+        width: 100%; height: 100%;
+        min-width: 0; min-height: 0;
     }
     #batch-header { height: 1; background: $panel; padding: 0 1; }
     #batch-output { height: 1fr; }
@@ -36,6 +43,9 @@ class BatchScriptScreen(ModalScreen[None]):
         super().__init__()
         self._job_id = job_id
         self._script = ""
+
+    def responsive_clamp(self, tier: Tier) -> None:
+        self.add_class(f"clamp-{tier}")
 
     def compose(self) -> ComposeResult:
         with Vertical(id="batch-dialog"):

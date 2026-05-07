@@ -13,6 +13,7 @@ from textual import work
 
 from ..slurm import Job, fetch_job_detail, fetch_job_dependencies
 from ..clipboard import app_copy
+from ..responsive import Tier
 
 
 def _strip_rich(markup: str) -> str:
@@ -34,10 +35,16 @@ class JobInfoScreen(ModalScreen[None]):
     CSS = """
     JobInfoScreen { align: center middle; }
     #job-info-dialog {
-        width: 80%; height: 85%;
+        width: 90%; height: 85%;
+        min-width: 60; max-width: 140;
+        min-height: 20; max-height: 50;
         border: double $primary;
         background: $surface;
         padding: 0;
+    }
+    JobInfoScreen.clamp-xs #job-info-dialog {
+        width: 100%; height: 100%;
+        min-width: 0; min-height: 0;
     }
     #job-info-title {
         text-style: bold;
@@ -63,6 +70,9 @@ class JobInfoScreen(ModalScreen[None]):
         super().__init__()
         self._job = job
         self._markup_text: str = ""
+
+    def responsive_clamp(self, tier: Tier) -> None:
+        self.add_class(f"clamp-{tier}")
 
     def compose(self) -> ComposeResult:
         header = f"Job {self._job.job_id}"
