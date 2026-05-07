@@ -67,7 +67,7 @@ def test_default_column_order_matches_columns(temp_config):
 
 
 def test_shift_column_right_swaps_first_two(monkeypatch, temp_config):
-    """ctrl+shift+right on column 0 moves it to position 1."""
+    """] on column 0 moves it to position 1."""
     view = NodesView()
     fake_table = _FakeTable()
     fake_table.cursor_column = 0

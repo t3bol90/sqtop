@@ -101,8 +101,8 @@ class NodesView(BaseDataTableView[Node]):
         Binding("V", "visual_enter", "Visual", show=False),
         Binding("escape", "visual_exit", "Exit visual", show=False),
         Binding("y", "yank", "Copy", show=False),
-        Binding("ctrl+shift+left", "shift_column_left", show=False),
-        Binding("ctrl+shift+right", "shift_column_right", show=False),
+        Binding("left_square_bracket", "shift_column_left", show=False),
+        Binding("right_square_bracket", "shift_column_right", show=False),
     ]
 
     def __init__(self, interval: float = 2.0, start_offset: float = 0.0) -> None:

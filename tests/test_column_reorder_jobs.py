@@ -61,7 +61,7 @@ def test_default_column_order_matches_columns(monkeypatch, temp_config):
 
 
 def test_shift_right_swaps_first_two_columns(monkeypatch, temp_config):
-    """2. ctrl+shift+right on column 0 moves col[0] to position 1."""
+    """2. ] on column 0 moves col[0] to position 1."""
     view = _make_view(monkeypatch, temp_config)
 
     original_col0 = view._column_order[0]
@@ -79,7 +79,7 @@ def test_shift_right_swaps_first_two_columns(monkeypatch, temp_config):
 
 
 def test_shift_left_on_first_column_is_noop(monkeypatch, temp_config):
-    """3. ctrl+shift+left on column 0 does nothing."""
+    """3. [ on column 0 does nothing."""
     view = _make_view(monkeypatch, temp_config)
 
     original_order = list(view._column_order)
@@ -92,7 +92,7 @@ def test_shift_left_on_first_column_is_noop(monkeypatch, temp_config):
 
 
 def test_shift_right_on_last_visible_column_is_noop(monkeypatch, temp_config):
-    """4. ctrl+shift+right on the last visible column does nothing."""
+    """4. ] on the last visible column does nothing."""
     view = _make_view(monkeypatch, temp_config)
 
     original_order = list(view._column_order)

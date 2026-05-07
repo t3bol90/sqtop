@@ -105,10 +105,10 @@ Threshold = **2 cells of horizontal motion** between `MouseDown` and `MouseUp`. 
 
 Two new view-local bindings on `JobsView` and `NodesView`:
 
-| Key             | Action                                                              |
-|-----------------|---------------------------------------------------------------------|
-| `ctrl+shift+left`  | Move the column under the data cursor one position left            |
-| `ctrl+shift+right` | Move the column under the data cursor one position right           |
+| Key   | Action                                                              |
+|-------|---------------------------------------------------------------------|
+| `[`   | Move the column under the data cursor one position left             |
+| `]`   | Move the column under the data cursor one position right            |
 
 Semantics:
 
@@ -116,9 +116,9 @@ Semantics:
 - A shift swaps that column with its left/right neighbor in `_column_order`, then triggers `_rebuild_columns(force=True)` and a `_render_rows(...)`.
 - Cursor follows the moved column: after a shift, the cursor remains on the same column (now at the new index). The data row under the cursor does not change.
 - Shifting the leftmost-visible column further left, or rightmost-visible further right, is a no-op (no wrap). Wrapping a column from one edge to the other is a deliberately bigger gesture and should be done with mouse drag.
-- Hidden columns are skipped when locating the swap neighbor. `ctrl+shift+left` swaps with the *next visible* column to the left, even if hidden columns sit between them in `_column_order`. Rationale: a press that produced no visible movement (because the immediate neighbor was hidden) felt broken in early prototyping; users perceive hidden columns as not occupying a position.
+- Hidden columns are skipped when locating the swap neighbor. `[` swaps with the *next visible* column to the left, even if hidden columns sit between them in `_column_order`. Rationale: a press that produced no visible movement (because the immediate neighbor was hidden) felt broken in early prototyping; users perceive hidden columns as not occupying a position.
 
-Why `ctrl+shift+arrow` and not unshifted arrows: arrows are already cursor movement inside `DataTable`, and `shift+arrow` is reserved for visual-mode selection extension (`copy.md` §4.1). `ctrl+shift+arrow` is unambiguous and matches the mental model of "structural move" used by tiling window managers and editors (e.g. tmux `prefix + {`/`}` for swap, vscode `alt+up`/`alt+down` for move-line).
+Why `[` / `]` and not arrow-based bindings: unshifted arrows are cursor movement inside `DataTable`; `shift+arrow` is reserved for visual-mode selection extension (`copy.md` §4.1); and `ctrl+shift+arrow` is widely intercepted by terminals and OSes (tab/pane navigation, word-by-word selection) so it failed in practice. `[` / `]` are unbound at every layer, single-keystroke, and mnemonically borrow tmux's `{` / `}` swap-pane convention without the modifier.
 
 Both bindings register with `show=False` to keep the footer uncluttered; they appear in the keybindings help overlay.
 
