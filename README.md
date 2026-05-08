@@ -228,6 +228,7 @@ User-defined entries override built-in reasons with the same Slurm reason key. `
 |---|---|
 | `Enter` | Open job actions |
 | `u` | Toggle only-my-jobs filter |
+| `f` | Cycle state filter (All → Running → Pending → Failed) |
 | `/` | Open search |
 | `Space` | Select/deselect current job |
 | `*` | Select all visible jobs |
@@ -239,12 +240,21 @@ User-defined entries override built-in reasons with the same Slurm reason key. `
 | `s` | Sort by state (toggle asc/desc) |
 | `t` | Sort by time |
 | `c` | Sort by CPUs |
-| `y` | Copy selected job ID |
-| `Shift+Y` | Copy current row |
+| `.` | Cycle column reorder target (highlight) |
+| `[` | Move highlighted column left |
+| `]` | Move highlighted column right |
+| `y` | Copy selected job ID (or yank visual selection) |
+| `Shift+Y` | Copy current row as TSV |
+| `v` | Enter visual selection mode |
+| `V` | Enter visual-line selection mode |
+| `Esc` | Exit visual mode / close search bar |
 | `w` | Toggle watch on selected job |
 | `Shift+D` | View dependency tree |
 | `i` | Job info (curated quick view) |
 | `I` | Investigate (evidence-based job report) |
+| `l` | View job stdout log |
+| `d` | Show full job detail (`scontrol show job`) |
+| `a` | Expand array job tasks |
 
 ### Nodes tab
 
