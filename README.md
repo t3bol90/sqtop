@@ -261,9 +261,17 @@ User-defined entries override built-in reasons with the same Slurm reason key. `
 | Key | Action |
 |---|---|
 | `Enter` | Open node details |
+| `f` | Cycle state filter (All → idle → allocated → mixed → down → gpu) |
 | `s` | Sort by state |
 | `p` | Sort by CPU% |
 | `m` | Sort by free memory |
+| `.` | Cycle column reorder target (highlight) |
+| `[` | Move highlighted column left |
+| `]` | Move highlighted column right |
+| `y` | Yank visual selection |
+| `v` | Enter visual selection mode |
+| `V` | Enter visual-line selection mode |
+| `Esc` | Exit visual mode |
 | `I` | Investigate (evidence-based node report) |
 
 ### Partitions tab
