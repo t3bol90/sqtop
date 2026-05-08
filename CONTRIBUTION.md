@@ -135,7 +135,9 @@ All tests must pass before committing.
 
 ## 3. Manual verification checklist
 
-After making changes, run through this in sqtop to catch regressions:
+After making changes, run through this in sqtop to catch regressions.
+
+### Core flows
 
 - [ ] Jobs tab refreshes; row selection and cursor follow work
 - [ ] `d` opens job detail modal instantly (no freeze for completed jobs)
@@ -146,6 +148,41 @@ After making changes, run through this in sqtop to catch regressions:
 - [ ] Nodes tab (`2`) renders CPU/GPU bars
 - [ ] Partitions tab (`3`) renders and sorts
 - [ ] `?` shows key bindings help
+
+### Investigation Mode
+
+- [ ] `I` (capital) on Jobs opens an investigation report; pending-reason explanation shown for PENDING jobs
+- [ ] `I` on Nodes opens a node investigation report; state explanation shown
+- [ ] Inside the investigation modal, `y` or `Ctrl+C` copies the plain-text report (verify with paste)
+- [ ] On a cluster where `sacct` is unavailable, completed-job investigation surfaces a partial-report warning toast and the "Errors" section shows the sacct entry
+- [ ] Command palette ("Investigate job by ID" / "Investigate node by name") prompts for an identifier and opens the report
+- [ ] Suggested actions never include admin-only verbs (drain, resume, modify partition, set qos, sudo)
+
+### Health surface
+
+- [ ] `5` switches to the Health tab; CATEGORY column populates after a permission-denied or timeout
+- [ ] Health view auto-refreshes; recent failures appear without manual refresh
+- [ ] OK/CATEGORY/ERROR columns truncate gracefully at narrow widths
+
+### Node filter
+
+- [ ] `f` cycles the Nodes filter ALL → IDLE → ALLOCATED → MIXED → DOWN → GPU → ALL
+- [ ] Header tag shows the active filter at sm+ tier
+- [ ] Filter does not persist across restart (intentionally transient)
+
+### Config CLI / reload
+
+- [ ] `sqtop --config /tmp/alt-sqtop.toml` reads from the alternate file (verify by writing a distinctive theme and observing it on launch)
+- [ ] `SQTOP_CONFIG=/tmp/alt-sqtop.toml sqtop` honors the env var when `--config` is absent
+- [ ] Command palette → "Reload config" re-applies theme and safety flags after editing the config on disk
+- [ ] Reload-config shows a "Refresh interval and column changes require restart" notify (intentional scope cap)
+
+### Responsive / no-overflow
+
+- [ ] Resize tmux pane to 40 cols; sqtop shows the too-small overlay and recovers when widened
+- [ ] At 80 cols, Footer shows the bindings without clipping; tabs remain readable
+- [ ] At 80 cols, the investigation modal renders within the pane without horizontal scroll
+- [ ] Switching tabs at 40-79 (xs) does not introduce horizontal overflow in any view
 
 ---
 
