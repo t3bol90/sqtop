@@ -376,3 +376,227 @@ def test_investigate_job_never_suggests_admin_actions(
     text = _action_text(report.suggested_actions)
     for verb in _FORBIDDEN_ADMIN_VERBS:
         assert verb not in text, f"forbidden verb {verb!r} appeared in actions: {text}"
+
+
+# ---------------------------------------------------------------------------
+# investigate_job — sacct accounting fold-in (SPEC sec. 8.4)
+# ---------------------------------------------------------------------------
+
+
+def _scontrol_terminal_block(job_id: str, state: str) -> str:
+    """Build a scontrol show job block for a terminal-state job."""
+    return (
+        f"JobId={job_id} JobName=t UserId=alice(1001) "
+        f"JobState={state} Reason=None Dependency=(null) "
+        "Partition=cpu QOS=normal NumNodes=1 NumCPUs=4 "
+        "TimeLimit=01:00:00 RunTime=00:30:00 "
+        "TRES=cpu=4,mem=8G,node=1 "
+        "SubmitTime=2026-05-08T10:00:00 StartTime=2026-05-08T10:01:00 "
+        "NodeList=(null) ReqNodeList=(null)"
+    )
+
+
+def _terminal_squeue_line(job_id: str, state: str) -> str:
+    return (
+        f"{job_id}|t|alice|{state}|cpu|1|4|0:30:00|01:00:00|"
+        f"None||normal\n"
+    )
+
+
+def _make_efficiency_dict() -> dict:
+    """A realistic fetch_job_efficiency() success payload."""
+    return {
+        "available": True,
+        "cpu_eff": 0.62,           # 62%
+        "mem_eff": 0.45,           # 45%
+        "cpu_used_str": "3:12:00",
+        "cpu_alloc_str": "5:10:00",
+        "mem_peak_mb": 1843,
+        "mem_alloc_mb": 4096,
+    }
+
+
+def test_investigate_job_completed_with_sacct_available(
+    monkeypatch, patch_scontrol, patch_run,
+):
+    """Terminal state COMPLETED with sacct available: evidence rows + raw_sections."""
+    job_id = "12345"
+    patch_scontrol(_scontrol_terminal_block(job_id, "COMPLETED"))
+
+    def router(cmd: str) -> str:
+        if "squeue" in cmd and "--noheader" in cmd and "-j" not in cmd:
+            return _terminal_squeue_line(job_id, "COMPLETED")
+        return ""
+
+    patch_run(router)
+    monkeypatch.setattr(slurm, "fetch_job_efficiency", lambda jid: _make_efficiency_dict())
+
+    report = slurm.investigate_job(job_id)
+
+    cpu_eff_evs = [ev for ev in report.evidence if ev.id == "sacct.cpu_eff"]
+    assert len(cpu_eff_evs) == 1
+    cpu_val = cpu_eff_evs[0].value
+    assert "62%" in cpu_val
+    assert "3:12:00" in cpu_val
+    assert "5:10:00" in cpu_val
+    assert cpu_eff_evs[0].source == "sacct"
+    assert cpu_eff_evs[0].confidence == "high"
+
+    mem_eff_evs = [ev for ev in report.evidence if ev.id == "sacct.mem_eff"]
+    assert len(mem_eff_evs) == 1
+    mem_val = mem_eff_evs[0].value
+    assert "45%" in mem_val
+    assert "1843" in mem_val
+    assert "4096" in mem_val
+    assert "MB" in mem_val
+    assert mem_eff_evs[0].source == "sacct"
+    assert mem_eff_evs[0].confidence == "high"
+
+    assert report.raw_sections.get("sacct") == "available"
+    assert not any(e.source == "sacct" for e in report.errors)
+
+
+def test_investigate_job_failed_with_sacct_unavailable(
+    monkeypatch, patch_scontrol, patch_run,
+):
+    """Terminal state FAILED with sacct unavailable: error entry, no evidence."""
+    job_id = "12345"
+    patch_scontrol(_scontrol_terminal_block(job_id, "FAILED"))
+
+    def router(cmd: str) -> str:
+        if "squeue" in cmd and "--noheader" in cmd and "-j" not in cmd:
+            return _terminal_squeue_line(job_id, "FAILED")
+        return ""
+
+    patch_run(router)
+    monkeypatch.setattr(slurm, "fetch_job_efficiency", lambda jid: {"available": False})
+
+    report = slurm.investigate_job(job_id)
+
+    assert report.raw_sections.get("sacct") == "unavailable"
+
+    sacct_errors = [e for e in report.errors if e.source == "sacct"]
+    assert len(sacct_errors) == 1
+    assert sacct_errors[0].category == "slurm_field_unavailable"
+
+    assert not any(ev.id == "sacct.cpu_eff" for ev in report.evidence)
+    assert not any(ev.id == "sacct.mem_eff" for ev in report.evidence)
+
+
+def test_investigate_job_running_does_not_call_sacct(
+    monkeypatch, patch_scontrol, patch_run,
+):
+    """RUNNING jobs must not trigger fetch_job_efficiency."""
+    job_id = "12345"
+    patch_scontrol(_scontrol_running_block(job_id))
+
+    squeue_main = (
+        f"{job_id}|train|alice|RUNNING|gpu|1|8|0:30:00|08:00:00|"
+        "None|node01|normal\n"
+    )
+
+    def router(cmd: str) -> str:
+        if "scontrol show hostnames" in cmd:
+            return "node01\n"
+        if "squeue" in cmd and "--noheader" in cmd and "-j" not in cmd:
+            return squeue_main
+        return ""
+
+    patch_run(router)
+    monkeypatch.setattr(slurm, "fetch_nodes", lambda: [])
+
+    calls: list[str] = []
+
+    def sentinel(jid: str) -> dict:
+        calls.append(jid)
+        return {"available": False}
+
+    monkeypatch.setattr(slurm, "fetch_job_efficiency", sentinel)
+
+    report = slurm.investigate_job(job_id)
+
+    assert calls == []
+    assert "sacct" not in report.raw_sections
+
+
+def test_investigate_job_pending_does_not_call_sacct(
+    monkeypatch, patch_scontrol, patch_run,
+):
+    """PENDING jobs must not trigger fetch_job_efficiency."""
+    job_id = "12346"
+    patch_scontrol(_scontrol_pending_resources_block(job_id))
+
+    squeue_main = (
+        f"{job_id}|preprocess|bob|PENDING|gpu|1|16|0:00|24:00:00|"
+        "Resources||normal\n"
+    )
+
+    def router(cmd: str) -> str:
+        if "squeue" in cmd and "--noheader" in cmd and "-j" not in cmd:
+            return squeue_main
+        return ""
+
+    patch_run(router)
+
+    calls: list[str] = []
+
+    def sentinel(jid: str) -> dict:
+        calls.append(jid)
+        return {"available": False}
+
+    monkeypatch.setattr(slurm, "fetch_job_efficiency", sentinel)
+
+    report = slurm.investigate_job(job_id)
+
+    assert calls == []
+    assert "sacct" not in report.raw_sections
+
+
+def test_investigate_job_terminal_state_admin_actions_unchanged(
+    monkeypatch, patch_scontrol, patch_run,
+):
+    """Regression: even with sacct evidence folded in, no admin actions appear."""
+    job_id = "12345"
+    patch_scontrol(_scontrol_terminal_block(job_id, "COMPLETED"))
+
+    def router(cmd: str) -> str:
+        if "squeue" in cmd and "--noheader" in cmd and "-j" not in cmd:
+            return _terminal_squeue_line(job_id, "COMPLETED")
+        return ""
+
+    patch_run(router)
+    monkeypatch.setattr(slurm, "fetch_job_efficiency", lambda jid: _make_efficiency_dict())
+
+    report = slurm.investigate_job(job_id)
+
+    assert all(a.safe_for_user for a in report.suggested_actions)
+    text = _action_text(report.suggested_actions)
+    for verb in _FORBIDDEN_ADMIN_VERBS:
+        assert verb not in text, f"forbidden verb {verb!r} appeared in actions: {text}"
+
+
+@pytest.mark.parametrize(
+    "state",
+    ["COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "OUT_OF_MEMORY", "PREEMPTED"],
+)
+def test_investigate_job_terminal_states_each(
+    monkeypatch, patch_scontrol, patch_run, state,
+):
+    """Every terminal state surfaces sacct evidence when accounting is available."""
+    job_id = "12345"
+    patch_scontrol(_scontrol_terminal_block(job_id, state))
+
+    def router(cmd: str) -> str:
+        if "squeue" in cmd and "--noheader" in cmd and "-j" not in cmd:
+            return _terminal_squeue_line(job_id, state)
+        return ""
+
+    patch_run(router)
+    monkeypatch.setattr(slurm, "fetch_job_efficiency", lambda jid: _make_efficiency_dict())
+
+    report = slurm.investigate_job(job_id)
+
+    assert any(ev.id == "sacct.cpu_eff" for ev in report.evidence)
+    assert any(ev.id == "sacct.mem_eff" for ev in report.evidence)
+    assert report.raw_sections.get("sacct") == "available"
+    assert report.errors == []

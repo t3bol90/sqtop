@@ -1067,6 +1067,44 @@ def investigate_job(job_id: str):
             safe_for_user=True,
         ))
 
+    # ---- sacct accounting (terminal-state jobs only, SPEC sec. 8.4) ------
+    # fetch_job_efficiency() returns {"available": False} on any failure
+    # (sacct missing, parse error, no data) — that path is folded into
+    # report.errors as a partial-result, not raised as an exception.
+    if state in _TERMINAL_STATES:
+        eff = fetch_job_efficiency(job_id)
+        if eff.get("available"):
+            report.evidence.append(InvestigationEvidence(
+                id="sacct.cpu_eff",
+                label="CPU efficiency",
+                value=(
+                    f"{round(eff['cpu_eff'] * 100)}% "
+                    f"(used {eff['cpu_used_str']} of {eff['cpu_alloc_str']})"
+                ),
+                source="sacct",
+                confidence="high",
+            ))
+            report.evidence.append(InvestigationEvidence(
+                id="sacct.mem_eff",
+                label="Memory efficiency",
+                value=(
+                    f"{round(eff['mem_eff'] * 100)}% "
+                    f"(peak {eff['mem_peak_mb']} MB of "
+                    f"{eff['mem_alloc_mb']} MB allocated)"
+                ),
+                source="sacct",
+                confidence="high",
+            ))
+            report.raw_sections["sacct"] = "available"
+        else:
+            report.raw_sections["sacct"] = "unavailable"
+            report.errors.append(InvestigationError(
+                source="sacct",
+                category="slurm_field_unavailable",
+                message="sacct accounting not available for this job",
+                stderr=None,
+            ))
+
     return report
 
 
