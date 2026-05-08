@@ -198,6 +198,28 @@ COLUMNS: list[ColumnSpec] = [
 ]
 
 
+def _job_matches_search(job: Job, query: str) -> bool:
+    """Return True if ``query`` is a substring of any searchable field on ``job``.
+
+    Searchable fields: name, user, state, partition, qos, reason, nodelist, job_id.
+    Match is case-insensitive (job_id is numeric so case folding is a no-op).
+    An empty/whitespace-stripped-empty query matches every job.
+    """
+    if not query:
+        return True
+    q = query.lower()
+    return (
+        q in job.name.lower()
+        or q in job.state.lower()
+        or q in job.partition.lower()
+        or q in job.job_id
+        or q in (job.user or "").lower()
+        or q in (job.qos or "").lower()
+        or q in (job.reason or "").lower()
+        or q in (job.nodelist or "").lower()
+    )
+
+
 def _coerce_positive_int(value: object, default: int) -> int:
     try:
         n = int(value)
@@ -303,7 +325,7 @@ class JobsView(BaseDataTableView[Job]):
         yield Label("", id="jobs-header")
         yield CyclicDataTable(id="jobs-table", cursor_type="row", zebra_stripes=True)
         yield Input(
-            placeholder="Filter by name / state / partition…  Esc to close",
+            placeholder="Search: name / user / state / partition / qos / reason / node / id…  Esc to close",
             id="search-bar",
         )
 
@@ -953,11 +975,7 @@ class JobsView(BaseDataTableView[Job]):
             else:
                 filtered = [j for j in filtered if j.state == self._filter_state]
         if self._search_query:
-            q = self._search_query.lower()
-            filtered = [
-                j for j in filtered
-                if q in j.name.lower() or q in j.state.lower() or q in j.partition.lower() or q in j.job_id
-            ]
+            filtered = [j for j in filtered if _job_matches_search(j, self._search_query)]
 
         if self._sort_col is None:
             self._last_jobs = sorted(filtered, key=_job_sort_key)
