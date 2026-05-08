@@ -27,6 +27,7 @@ class HealthView(Static):
         table.add_column("COMMAND", width=22)
         table.add_column("OK", width=6)
         table.add_column("LATENCY", width=10)
+        table.add_column("CATEGORY", width=22)
         table.add_column("ERROR", width=42)
         yield table
 
@@ -58,10 +59,13 @@ class HealthView(Static):
         table.clear()
         for item in reversed(stats[-100:]):
             err = item.stderr[:40] + ("..." if len(item.stderr) > 40 else "")
+            cat = item.error_category or ""
+            cat_cell = f"[red]{cat}[/]" if cat else ""
             table.add_row(
                 item.command.split(" ", 1)[0],
                 "[green]yes[/]" if item.ok else "[red]no[/]",
                 f"{item.latency_ms} ms",
+                cat_cell,
                 err,
             )
         if stats:
@@ -74,3 +78,20 @@ class HealthView(Static):
             f"[b]health[/b]  [red]{failures} failures[/]  [cyan]{avg_ms}ms avg[/]  "
             f"[dim]{len(stats)} samples  updated {now}[/]"
         )
+
+    def copy_pane(self) -> tuple[str, str, int]:
+        """Return (label, tsv_payload, row_count) for the health pane."""
+        header = "\t".join(["COMMAND", "OK", "LATENCY", "CATEGORY", "ERROR"])
+        rows: list[str] = []
+        for item in reversed(self._last_stats[-100:]):
+            rows.append(
+                "\t".join([
+                    item.command.split(" ", 1)[0],
+                    "yes" if item.ok else "no",
+                    f"{item.latency_ms} ms",
+                    item.error_category or "",
+                    item.stderr,
+                ])
+            )
+        payload = "\n".join([header, *rows]) + "\n"
+        return "Health", payload, len(rows)

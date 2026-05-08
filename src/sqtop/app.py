@@ -18,6 +18,7 @@ from .views.jobs import JobsView, COLUMNS as JOBS_COLUMNS
 from .views.nodes import NodesView, COLUMNS as NODES_COLUMNS
 from .views.partitions import PartitionsView, COLUMNS as PARTITIONS_COLUMNS
 from .views.history import HistoryView
+from .views.health import HealthView
 from .views.column_toggle import ColumnToggleScreen
 from .views.keybindings_help import KeybindingHelpScreen
 from . import config, slurm
@@ -40,6 +41,7 @@ _TAB_LABELS: dict[str, tuple[str, str]] = {
     "nodes":      ("Nodes",      "Nodes [2]"),
     "partitions": ("Partitions", "Partitions [3]"),
     "history":    ("History",    "History [4]"),
+    "health":     ("Health",     "Health [5]"),
 }
 
 # Minimum tier for each action's binding to be shown in the Footer.
@@ -57,6 +59,7 @@ _BINDING_SHOW_AT: dict[str, Tier] = {
     "switch_tab('nodes')":          "sm",
     "switch_tab('partitions')":     "sm",
     "switch_tab('history')":        "sm",
+    "switch_tab('health')":         "sm",
 }
 
 
@@ -72,6 +75,7 @@ class SqtopApp(App):
         Binding("2", "switch_tab('nodes')", "Nodes"),
         Binding("3", "switch_tab('partitions')", "Partitions"),
         Binding("4", "switch_tab('history')", "History"),
+        Binding("5", "switch_tab('health')", "Health"),
         Binding("r", "refresh", "Refresh"),
         Binding("P", "toggle_pause", "Pause", show=False),
         Binding("S", "command_palette", "Commands", show=False),
@@ -288,6 +292,8 @@ class SqtopApp(App):
                 yield PartitionsView(self._intervals["partitions"], start_offset=1.4)
             with TabPane("History [4]", id="history"):
                 yield HistoryView(interval=30.0, start_offset=2.1)
+            with TabPane("Health [5]", id="health"):
+                yield HealthView(interval=2.0)
         yield Footer()
 
     def action_switch_tab(self, tab_id: str) -> None:
@@ -300,6 +306,7 @@ class SqtopApp(App):
             "nodes": "#nodes-table",
             "partitions": "#partitions-table",
             "history": "#history-table",
+            "health": "#health-table",
         }.get(tab_id)
         if not table_id:
             return
@@ -483,6 +490,7 @@ class SqtopApp(App):
             "nodes": NodesView,
             "partitions": PartitionsView,
             "history": HistoryView,
+            "health": HealthView,
         }
         view_cls = view_map.get(active)
         if view_cls is None:

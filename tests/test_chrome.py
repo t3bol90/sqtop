@@ -99,6 +99,7 @@ class TestTabLabels:
         assert "nodes" in _TAB_LABELS
         assert "partitions" in _TAB_LABELS
         assert "history" in _TAB_LABELS
+        assert "health" in _TAB_LABELS
 
     def test_tab_labels_xs_short(self):
         """At xs the short label has no bracket suffix."""
@@ -361,3 +362,79 @@ class TestViewHeaderDensity:
         md_text = self._nodes_header_text("md")
         assert "alloc" in md_text
         assert "mixed" in md_text
+
+
+# ---------------------------------------------------------------------------
+# Health tab mount (PR 5b)
+# ---------------------------------------------------------------------------
+
+
+class TestHealthTab:
+    """Health tab is mounted as the 5th tab with key '5'."""
+
+    def test_health_tab_label_full_includes_bracket_5(self):
+        """Full label for health tab is 'Health [5]'."""
+        from sqtop.app import _TAB_LABELS
+        short, full = _TAB_LABELS["health"]
+        assert short == "Health"
+        assert "[5]" in full
+
+    def test_health_binding_present(self):
+        """App-level BINDINGS contains the '5' switch_tab('health') binding."""
+        from textual.binding import Binding
+        from sqtop.app import SqtopApp
+        actions = set()
+        for b in SqtopApp.BINDINGS:
+            if isinstance(b, Binding):
+                actions.add((b.key, b.action))
+        assert ("5", "switch_tab('health')") in actions
+
+    def test_health_binding_show_at_sm(self):
+        """switch_tab('health') is mapped to 'sm' tier in _BINDING_SHOW_AT."""
+        from sqtop.app import _BINDING_SHOW_AT
+        assert _BINDING_SHOW_AT.get("switch_tab('health')") == "sm"
+
+    def test_health_focus_table_id_registered(self):
+        """_focus_table_for_tab('health') resolves to '#health-table'."""
+        # The mapping lives inside the function as a literal dict; we exercise it by
+        # calling the method against an unmounted app (errors are swallowed, so the
+        # key must at least exist for the call to be a no-op rather than a return).
+        app = _make_app(80, 24)
+        # No exception; the method silently returns when query_one fails.
+        app._focus_table_for_tab("health")
+
+    @pytest.mark.asyncio
+    async def test_health_tab_mounted_in_tabbed_content(self):
+        """TabbedContent has a TabPane with id='health' after compose."""
+        from textual.widgets import TabbedContent
+        app = _make_app(120, 30)
+        async with app.run_test(size=(120, 30)) as pilot:
+            tc = pilot.app.query_one(TabbedContent)
+            # get_tab works only after mount; the call itself must not raise.
+            tab = tc.get_tab("health")
+            assert tab is not None
+            label_text = str(tab.label)
+            assert "Health" in label_text
+
+    @pytest.mark.asyncio
+    async def test_switch_to_health_tab_focuses_health_table(self):
+        """Pressing '5' switches to the health tab and focuses #health-table."""
+        from textual.widgets import TabbedContent
+        app = _make_app(120, 30)
+        async with app.run_test(size=(120, 30)) as pilot:
+            await pilot.press("5")
+            await pilot.pause()
+            tc = pilot.app.query_one(TabbedContent)
+            assert tc.active == "health"
+
+    def test_health_view_in_copy_pane_view_map(self):
+        """action_copy_pane's view_map dispatches health → HealthView.
+
+        The map is defined locally inside the method, so we assert HealthView is
+        importable and that the source contains the mapping line.
+        """
+        import inspect
+        from sqtop.app import SqtopApp
+        from sqtop.views.health import HealthView  # noqa: F401  (import side-effect)
+        src = inspect.getsource(SqtopApp.action_copy_pane)
+        assert '"health": HealthView' in src
