@@ -29,7 +29,8 @@ def test_load_merges_partial_attach(monkeypatch, tmp_path):
 
     cfg = config.load()
     assert cfg["theme"] == "nord"
-    assert cfg["interval"] == 10.0
+    # Legacy bare top-level `interval = 10.0` fans out to all three view keys.
+    assert cfg["interval"] == {"jobs": 10.0, "nodes": 10.0, "partitions": 10.0}
     assert cfg["attach"]["enabled"] is False
     assert cfg["attach"]["default_command"] == "$SHELL -l"
     assert cfg["attach"]["extra_args"] == ""
@@ -53,7 +54,11 @@ def test_save_preserves_attach_values(monkeypatch, tmp_path):
 
     content = cfg_file.read_text(encoding="utf-8")
     assert 'theme = "nord"' in content
-    assert "interval = 5.0" in content
+    # New shape: [interval] table with broadcast values from save().
+    assert "[interval]" in content
+    assert "jobs = 5.0" in content
+    assert "nodes = 5.0" in content
+    assert "partitions = 5.0" in content
     assert "[attach]" in content
     assert "enabled = false" in content
     assert 'default_command = "zsh -l"' in content

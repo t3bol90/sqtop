@@ -47,7 +47,7 @@ def test_load_malformed_toml_returns_defaults(temp_config):
     cfg = config.load()
     # Should return defaults without raising
     assert cfg["theme"] == "dracula"
-    assert cfg["interval"] == 2.0
+    assert cfg["interval"] == {"jobs": 2.0, "nodes": 2.0, "partitions": 5.0}
     assert "jobs" in cfg
     assert "attach" in cfg
 
@@ -90,6 +90,6 @@ def test_update_nested_override(temp_config):
 
 
 def test_update_top_level_key(temp_config):
-    config.update({"interval": 10.0})
+    config.update({"theme": "tokyo-night"})
     cfg = config.load()
-    assert cfg["interval"] == 10.0
+    assert cfg["theme"] == "tokyo-night"

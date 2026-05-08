@@ -1,4 +1,69 @@
-"""Persistent configuration stored in ~/.config/sqtop/config.toml."""
+"""Persistent configuration for sqtop.
+
+Stored at ~/.config/sqtop/config.toml. The config file is the single
+persistent source of truth for user preferences (SPEC §15, §18.11).
+
+Schema:
+
+theme: str — Textual theme name applied at startup.
+
+[interval]
+  jobs: float — auto-refresh seconds for the Jobs view.
+  nodes: float — auto-refresh seconds for the Nodes view.
+  partitions: float — auto-refresh seconds for the Partitions view.
+
+[jobs]
+  name_max: int — max column width for the job name.
+  user_max: int — max column width for the user name.
+  partition_max: int — max column width for the partition name.
+  nodelist_reason_max: int — max column width for nodelist/reason.
+  qos_max: int — max column width for QoS.
+
+[attach]
+  enabled: bool — whether the attach-via-srun action is offered.
+  default_command: str — default command shell when attaching to a job.
+  extra_args: str — extra arguments appended to the srun attach command.
+
+[ui]
+  expert_mode: bool — when true, suppress confirmation dialogs for
+    destructive actions.
+  show_palette_hints: bool — when true, show command palette hints.
+
+[safety]
+  confirm_cancel_single: bool — confirm before cancelling a single job.
+  confirm_bulk_actions: bool — confirm before bulk actions on selections.
+
+[health]
+  enabled: bool — enable the Health view diagnostics.
+  history_size: int — number of recent Slurm command records to retain.
+  warn_pending_ratio: float — pending/total threshold that triggers a warn.
+  warn_down_nodes: int — DOWN node count that triggers a warn.
+
+[view_state]
+  jobs_sort_col: str — last sort column for Jobs view (empty = default).
+  jobs_sort_reversed: bool — last sort direction for Jobs view.
+  nodes_sort_col: str — last sort column for Nodes view.
+  nodes_sort_reversed: bool — last sort direction for Nodes view.
+  partitions_sort_col: str — last sort column for Partitions view.
+  partitions_sort_reversed: bool — last sort direction for Partitions view.
+
+[columns]
+  jobs_hidden: list[str] — hidden column names for Jobs view.
+  nodes_hidden: list[str] — hidden column names for Nodes view.
+  partitions_hidden: list[str] — hidden column names for Partitions view.
+  jobs_order: list[str] — explicit column order for Jobs view (empty = default).
+  nodes_order: list[str] — explicit column order for Nodes view.
+  partitions_order: list[str] — explicit column order for Partitions view.
+
+[notifications]
+  desktop_enabled: bool — enable desktop notifications when supported.
+
+[remote]
+  host: str — default SSH host for remote mode (empty = local).
+
+[clipboard]
+  transport: str — clipboard transport: "auto", "osc52", or "subprocess".
+"""
 from __future__ import annotations
 
 import tomllib
@@ -9,7 +74,7 @@ _CONFIG_FILE = _CONFIG_DIR / "config.toml"
 
 _DEFAULTS: dict = {
     "theme": "dracula",
-    "interval": 2.0,
+    "interval": {"jobs": 2.0, "nodes": 2.0, "partitions": 5.0},
     "jobs": {
         "name_max": 24,
         "user_max": 12,
@@ -67,7 +132,7 @@ _DEFAULTS: dict = {
 def _defaults() -> dict:
     return {
         "theme": _DEFAULTS["theme"],
-        "interval": _DEFAULTS["interval"],
+        "interval": dict(_DEFAULTS["interval"]),
         "jobs": dict(_DEFAULTS["jobs"]),
         "attach": dict(_DEFAULTS["attach"]),
         "ui": dict(_DEFAULTS["ui"]),
@@ -93,8 +158,39 @@ def load() -> dict:
         with _CONFIG_FILE.open("rb") as f:
             data = tomllib.load(f)
         cfg = _defaults()
-        nested_keys = {"jobs", "attach", "ui", "safety", "health", "view_state", "columns", "notifications", "remote", "clipboard"}
+        nested_keys = {
+            "interval",
+            "jobs",
+            "attach",
+            "ui",
+            "safety",
+            "health",
+            "view_state",
+            "columns",
+            "notifications",
+            "remote",
+            "clipboard",
+        }
+        # Copy bare top-level keys (e.g. theme) but skip nested-table keys so
+        # the legacy bare `interval = 2.0` does not overwrite the dict default.
         cfg.update({k: v for k, v in data.items() if k not in nested_keys})
+
+        # Interval — legacy float at top level fans out to all three keys; a
+        # [interval] table, when present, wins on a per-key basis.
+        interval = dict(_DEFAULTS["interval"])
+        legacy = data.get("interval")
+        if isinstance(legacy, (int, float)) and not isinstance(legacy, bool):
+            broadcast = float(legacy)
+            interval = {k: broadcast for k in interval}
+        if isinstance(legacy, dict):
+            for k, default_v in _DEFAULTS["interval"].items():
+                v = legacy.get(k, default_v)
+                try:
+                    interval[k] = float(v)
+                except (TypeError, ValueError):
+                    interval[k] = float(default_v)
+        cfg["interval"] = interval
+
         jobs = dict(_DEFAULTS["jobs"])
         if isinstance(data.get("jobs"), dict):
             jobs.update(data["jobs"])
@@ -146,10 +242,15 @@ def load() -> dict:
 
 
 def save(theme: str, interval: float) -> None:
-    """Persist theme/interval while preserving other settings."""
+    """Persist theme and broadcast interval to all three view keys.
+
+    The single-knob "Set refresh: Xs" UX writes the same value to jobs/nodes/
+    partitions; per-view tuning happens via direct config edits or update().
+    """
     cfg = load()
     cfg["theme"] = theme
-    cfg["interval"] = interval
+    secs = float(interval)
+    cfg["interval"] = {"jobs": secs, "nodes": secs, "partitions": secs}
     _write(cfg)
 
 
@@ -166,6 +267,14 @@ def update(overrides: dict) -> None:
 
 def _toml_str_list(lst: list) -> str:
     return "[" + ", ".join(f'"{x}"' for x in lst) + "]"
+
+
+def _toml_float(value: float) -> str:
+    """Format a float for TOML output, keeping integer-valued floats readable."""
+    f = float(value)
+    if f == int(f):
+        return f"{f:.1f}"
+    return repr(f)
 
 
 def _write(cfg: dict) -> None:
@@ -192,14 +301,34 @@ def _write(cfg: dict) -> None:
         safety.get("confirm_bulk_actions", _DEFAULTS["safety"]["confirm_bulk_actions"])
     )
     health_enabled = bool(health.get("enabled", _DEFAULTS["health"]["enabled"]))
-    history_size = int(health.get("history_size", _DEFAULTS["health"]["history_size"]))
-    warn_pending_ratio = float(
-        health.get("warn_pending_ratio", _DEFAULTS["health"]["warn_pending_ratio"])
-    )
-    warn_down_nodes = int(health.get("warn_down_nodes", _DEFAULTS["health"]["warn_down_nodes"]))
+    try:
+        history_size = int(health.get("history_size", _DEFAULTS["health"]["history_size"]))
+    except (TypeError, ValueError):
+        history_size = int(_DEFAULTS["health"]["history_size"])
+    try:
+        warn_pending_ratio = float(
+            health.get("warn_pending_ratio", _DEFAULTS["health"]["warn_pending_ratio"])
+        )
+    except (TypeError, ValueError):
+        warn_pending_ratio = float(_DEFAULTS["health"]["warn_pending_ratio"])
+    try:
+        warn_down_nodes = int(health.get("warn_down_nodes", _DEFAULTS["health"]["warn_down_nodes"]))
+    except (TypeError, ValueError):
+        warn_down_nodes = int(_DEFAULTS["health"]["warn_down_nodes"])
 
     theme = str(cfg.get("theme", _DEFAULTS["theme"]))
-    interval = float(cfg.get("interval", _DEFAULTS["interval"]))
+
+    interval_cfg = cfg.get("interval", _DEFAULTS["interval"])
+    if not isinstance(interval_cfg, dict):
+        interval_cfg = {}
+    def _iv(key: str) -> float:
+        try:
+            return float(interval_cfg.get(key, _DEFAULTS["interval"][key]))
+        except (TypeError, ValueError):
+            return float(_DEFAULTS["interval"][key])
+    iv_jobs = _iv("jobs")
+    iv_nodes = _iv("nodes")
+    iv_parts = _iv("partitions")
 
     jobs_sort_col = str(view_state.get("jobs_sort_col", _DEFAULTS["view_state"]["jobs_sort_col"]))
     jobs_sort_reversed = bool(view_state.get("jobs_sort_reversed", _DEFAULTS["view_state"]["jobs_sort_reversed"]))
@@ -223,7 +352,11 @@ def _write(cfg: dict) -> None:
     _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     lines = [
         f'theme = "{theme}"',
-        f"interval = {interval}",
+        "",
+        "[interval]",
+        f"jobs = {_toml_float(iv_jobs)}",
+        f"nodes = {_toml_float(iv_nodes)}",
+        f"partitions = {_toml_float(iv_parts)}",
         "",
         "[jobs]",
         f'name_max = {int(jobs.get("name_max", _DEFAULTS["jobs"]["name_max"]))}',

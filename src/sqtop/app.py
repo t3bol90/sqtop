@@ -92,7 +92,14 @@ class SqtopApp(App):
     def __init__(self) -> None:
         super().__init__()
         cfg = config.load()
-        self.interval = cfg["interval"]
+        intervals = cfg["interval"]
+        self._intervals = {
+            "jobs": float(intervals.get("jobs", 2.0)),
+            "nodes": float(intervals.get("nodes", 2.0)),
+            "partitions": float(intervals.get("partitions", 5.0)),
+        }
+        # App-wide default mirrors the Jobs interval (the most-used cadence).
+        self.interval = self._intervals["jobs"]
         self._saved_theme = cfg["theme"]
         self._paused: bool = False
         self.expert_mode = bool(cfg.get("ui", {}).get("expert_mode", False))
@@ -149,6 +156,8 @@ class SqtopApp(App):
         )
 
     def watch_theme(self, theme: str) -> None:
+        # save() broadcasts self.interval to all three [interval] keys; the
+        # single-knob refresh palette is the documented persistence path here.
         config.save(theme, self.interval)
 
     def on_mount(self) -> None:
@@ -272,11 +281,11 @@ class SqtopApp(App):
         yield Header()
         with TabbedContent(initial="jobs"):
             with TabPane("Jobs [1]", id="jobs"):
-                yield JobsView(self.interval)
+                yield JobsView(self._intervals["jobs"])
             with TabPane("Nodes [2]", id="nodes"):
-                yield NodesView(self.interval, start_offset=0.7)
+                yield NodesView(self._intervals["nodes"], start_offset=0.7)
             with TabPane("Partitions [3]", id="partitions"):
-                yield PartitionsView(self.interval, start_offset=1.4)
+                yield PartitionsView(self._intervals["partitions"], start_offset=1.4)
             with TabPane("History [4]", id="history"):
                 yield HistoryView(interval=30.0, start_offset=2.1)
         yield Footer()
@@ -502,5 +511,8 @@ class SqtopApp(App):
 
     def set_refresh_interval(self, interval: float) -> None:
         self.interval = interval
+        # Single-knob "Set refresh: Xs" — apply to every view's per-tick cadence
+        # and to the cached intervals dict so subsequent saves stay consistent.
+        self._intervals = {"jobs": interval, "nodes": interval, "partitions": interval}
         for view in self.query("JobsView, NodesView, PartitionsView"):
             view.set_interval_rate(interval)  # type: ignore[union-attr]
