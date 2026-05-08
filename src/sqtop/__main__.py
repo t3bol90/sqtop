@@ -51,10 +51,21 @@ def main() -> None:
     if cfg is None:
         cfg = config.load()
     reasons_path = str(cfg.get("investigation", {}).get("reasons_path", "")).strip()
+    p: Path | None
     if reasons_path:
         p = Path(reasons_path).expanduser()
         if not p.is_absolute():
             p = (config._CONFIG_DIR / p).resolve()
+    else:
+        # Auto-discover: when no path is configured, fall back to a sibling
+        # reasons.toml next to config.toml. Empty / missing = no-op. The
+        # is_file() guard skips both "missing" and "is a directory" cases
+        # so we never call register_user_reasons({}) on the auto-discover
+        # path and clobber any state left by the explicit-path branch.
+        candidate = (config._CONFIG_DIR / "reasons.toml").resolve()
+        p = candidate if candidate.is_file() else None
+
+    if p is not None:
         investigation.register_user_reasons(investigation.load_user_reasons(p))
 
     SqtopApp().run()

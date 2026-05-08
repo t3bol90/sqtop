@@ -326,3 +326,133 @@ def test_load_user_reasons_does_not_mutate_module_state(tmp_path):
     assert investigation._USER_REASONS == {}
     exp = explain_pending_reason("Foo")
     assert "unrecognized" in exp.title.lower()
+
+
+# ---------------------------------------------------------------------------
+# Auto-discover: __main__.main() picks up <config_dir>/reasons.toml when
+# [investigation].reasons_path is empty (SPEC §16.7, §20.3).
+# ---------------------------------------------------------------------------
+
+
+class _DummyApp:
+    """Stand-in for SqtopApp so __main__.main() returns without launching the TUI."""
+
+    def run(self) -> None:
+        return None
+
+
+def _patch_app(monkeypatch) -> None:
+    """Monkeypatch SqtopApp on the __main__ module."""
+    from sqtop import __main__ as cli_main
+
+    monkeypatch.setattr(cli_main, "SqtopApp", _DummyApp)
+
+
+def test_main_autodiscover_loads_reasons_toml_when_present(monkeypatch, temp_config):
+    """With no explicit reasons_path and a sibling reasons.toml, auto-load it."""
+    from sqtop import __main__ as cli_main
+
+    # Empty [investigation].reasons_path — the default returned by config.load().
+    # No on-disk config.toml is needed here; load() returns defaults when the
+    # file does not exist, and temp_config has no config.toml seeded.
+    (temp_config / "reasons.toml").write_text(
+        "[AutoDiscovered]\n"
+        'title = "Auto-discovered title"\n'
+        'detail = "Auto-discovered detail."\n'
+        'confidence = "medium"\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("sys.argv", ["sqtop"])
+    _patch_app(monkeypatch)
+
+    cli_main.main()
+
+    assert "AutoDiscovered" in investigation._USER_REASONS
+    entry = investigation._USER_REASONS["AutoDiscovered"]
+    assert entry.title == "Auto-discovered title"
+    assert entry.detail == "Auto-discovered detail."
+    assert entry.confidence == "medium"
+
+
+def test_main_autodiscover_skipped_when_explicit_path_is_set(monkeypatch, temp_config):
+    """An explicit reasons_path beats the auto-discovered sibling reasons.toml."""
+    from sqtop import __main__ as cli_main
+
+    # Auto-discover candidate — must NOT win.
+    (temp_config / "reasons.toml").write_text(
+        "[AutoDiscovered]\n"
+        'title = "auto title"\n'
+        'detail = "auto detail"\n'
+        'confidence = "medium"\n',
+        encoding="utf-8",
+    )
+
+    # Explicit path — must win.
+    explicit = temp_config / "explicit.toml"
+    explicit.write_text(
+        "[Explicit]\n"
+        'title = "explicit title"\n'
+        'detail = "explicit detail"\n'
+        'confidence = "high"\n',
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        cli_main.config,
+        "load",
+        lambda: {"investigation": {"reasons_path": str(explicit)}},
+    )
+    monkeypatch.setattr("sys.argv", ["sqtop"])
+    _patch_app(monkeypatch)
+
+    cli_main.main()
+
+    assert "Explicit" in investigation._USER_REASONS
+    assert "AutoDiscovered" not in investigation._USER_REASONS
+
+
+def test_main_autodiscover_no_op_when_neither_present(monkeypatch, temp_config):
+    """No reasons.toml and no explicit reasons_path -> _USER_REASONS stays empty."""
+    from sqtop import __main__ as cli_main
+
+    # No reasons.toml on disk; no config.toml on disk either.
+    monkeypatch.setattr("sys.argv", ["sqtop"])
+    _patch_app(monkeypatch)
+
+    cli_main.main()
+
+    assert investigation._USER_REASONS == {}
+
+
+def test_main_autodiscover_handles_malformed_reasons_toml(monkeypatch, temp_config):
+    """Malformed sibling reasons.toml must not raise; map stays empty."""
+    from sqtop import __main__ as cli_main
+
+    (temp_config / "reasons.toml").write_text("= = =\n", encoding="utf-8")
+
+    monkeypatch.setattr("sys.argv", ["sqtop"])
+    _patch_app(monkeypatch)
+
+    cli_main.main()  # Must not raise.
+
+    assert investigation._USER_REASONS == {}
+
+
+def test_main_autodiscover_skips_when_reasons_toml_is_a_directory(monkeypatch, temp_config):
+    """is_file() guard: if reasons.toml is mistakenly a directory, no-op cleanly.
+
+    Pins the documented is_file() semantics — exists() would let a directory
+    through and force load_user_reasons() to take its own is_file() short-
+    circuit, but the explicit guard here is what the SPEC pins.
+    """
+    from sqtop import __main__ as cli_main
+
+    (temp_config / "reasons.toml").mkdir()
+
+    monkeypatch.setattr("sys.argv", ["sqtop"])
+    _patch_app(monkeypatch)
+
+    cli_main.main()  # Must not raise.
+
+    assert investigation._USER_REASONS == {}
