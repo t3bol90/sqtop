@@ -8,6 +8,7 @@ import shlex
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from collections import deque
+from datetime import datetime
 from time import monotonic
 
 
@@ -190,32 +191,68 @@ class Job:
     qos: str = ""
 
 
+# Shared squeue format used by both fetch_jobs() and fetch_jobs_on_node().
+# Field count is fixed at 12: any change here MUST be matched in
+# _parse_squeue_row()'s minimum-field guard.
+_SQUEUE_FMT = "%i|%j|%u|%T|%P|%D|%C|%M|%l|%R|%N|%q"
+
+
+def _parse_squeue_row(line: str) -> Job | None:
+    """Parse one squeue row produced with _SQUEUE_FMT into a Job.
+
+    Returns None for malformed rows (fewer than 12 pipe-separated fields)
+    so callers can keep going on partial output. SPEC sec. 9.4 requires
+    parsers to tolerate missing/extra fields without crashing.
+    """
+    parts = line.split("|")
+    if len(parts) < 12:
+        return None
+    qos_raw = parts[11]
+    qos = "" if qos_raw in ("N/A", "(null)") else qos_raw
+    return Job(
+        job_id=parts[0],
+        name=parts[1],
+        user=parts[2],
+        state=parts[3],
+        partition=parts[4],
+        nodes=parts[5],
+        num_cpus=parts[6],
+        time_used=parts[7],
+        time_limit=parts[8],
+        reason=parts[9],
+        nodelist=parts[10],
+        num_nodes=parts[5],
+        qos=qos,
+    )
+
+
 def fetch_jobs() -> list[Job]:
     """Return jobs from squeue -o with parseable format."""
-    fmt = "%i|%j|%u|%T|%P|%D|%C|%M|%l|%R|%N|%q"
-    out = _run(f"squeue --noheader -o '{fmt}'")
-    jobs = []
+    out = _run(f"squeue --noheader -o '{_SQUEUE_FMT}'")
+    jobs: list[Job] = []
     for line in out.strip().splitlines():
-        parts = line.split("|")
-        if len(parts) < 12:
-            continue
-        qos_raw = parts[11]
-        qos = "" if qos_raw in ("N/A", "(null)") else qos_raw
-        jobs.append(Job(
-            job_id=parts[0],
-            name=parts[1],
-            user=parts[2],
-            state=parts[3],
-            partition=parts[4],
-            nodes=parts[5],
-            num_cpus=parts[6],
-            time_used=parts[7],
-            time_limit=parts[8],
-            reason=parts[9],
-            nodelist=parts[10],
-            num_nodes=parts[5],
-            qos=qos,
-        ))
+        job = _parse_squeue_row(line)
+        if job is not None:
+            jobs.append(job)
+    return jobs
+
+
+def fetch_jobs_on_node(node_name: str) -> list[Job]:
+    """Return jobs currently visible on a specific node via squeue -w.
+
+    Returns [] without invoking any command when ``node_name`` is empty
+    or whitespace. Failures are logged via ``_run_result`` (through
+    ``_run``) and surface as an empty list.
+    """
+    name = (node_name or "").strip()
+    if not name:
+        return []
+    out = _run(f"squeue --noheader -w {shlex.quote(name)} -o '{_SQUEUE_FMT}'")
+    jobs: list[Job] = []
+    for line in out.strip().splitlines():
+        job = _parse_squeue_row(line)
+        if job is not None:
+            jobs.append(job)
     return jobs
 
 
@@ -701,6 +738,336 @@ def fetch_sacct_jobs(hours: int = 24) -> list[SacctJob]:
             partition=parts[7],
         ))
     return jobs
+
+
+# ---------------------------------------------------------------------------
+# Investigation Mode (SPEC sec. 8.4, 9.3, 10.3)
+# ---------------------------------------------------------------------------
+
+# State token sets used to gate which suggested actions are surfaced.
+# Kept as module-level frozensets so investigate_job() does no per-call
+# allocation when classifying state.
+_PENDING_STATES = frozenset({"PENDING", "PD"})
+_RUNNING_STATES = frozenset({"RUNNING", "R"})
+_TERMINAL_STATES = frozenset({
+    "COMPLETED", "CD",
+    "FAILED", "F",
+    "CANCELLED", "CA",
+    "TIMEOUT", "TO",
+    "NODE_FAIL", "NF",
+    "PREEMPTED", "PR",
+    "OUT_OF_MEMORY", "OOM",
+})
+
+# Slurm sentinels we treat as "not provided".
+_NULL_SENTINELS = frozenset({"", "(null)", "N/A", "None", "none"})
+
+
+def _present(value: str | None) -> bool:
+    """True if ``value`` carries real Slurm content (not a null sentinel)."""
+    if value is None:
+        return False
+    return value.strip() not in _NULL_SENTINELS
+
+
+def _display(value: str | None) -> str:
+    """Format ``value`` for InvestigationItem display, mapping nulls."""
+    if not _present(value):
+        return "(unavailable)"
+    # Defensive: _present already proved value is a real string.
+    return value.strip()  # type: ignore[union-attr]
+
+
+def investigate_job(job_id: str):
+    """Build an InvestigationReport for a single job.
+
+    SPEC sec. 8.4 / 9.3 / 10.3. Tolerant of partial failure: scontrol
+    unavailable, job_id absent from the live squeue snapshot, or
+    dependency parse errors must NOT raise. A report with errors is
+    always preferable to no report.
+    """
+    # Local import: investigation imports Job/Node from slurm, so we keep
+    # the dependency one-way at module load by deferring this import.
+    from .investigation import (
+        InvestigationAction,
+        InvestigationError,
+        InvestigationEvidence,
+        InvestigationExplanation,
+        InvestigationItem,
+        InvestigationReport,
+        InvestigationTarget,
+        explain_pending_reason,
+    )
+
+    target = InvestigationTarget(kind="job", identifier=job_id, source="typed")
+    report = InvestigationReport(target=target, generated_at=datetime.now())
+
+    # ---- scontrol show job ------------------------------------------------
+    scontrol_out, scontrol_ok, scontrol_err = _run_result(
+        f"scontrol show job {shlex.quote(job_id)}"
+    )
+    detail: dict[str, str] = {}
+    if scontrol_ok:
+        for token in scontrol_out.split():
+            if "=" in token:
+                k, _, v = token.partition("=")
+                detail[k] = v
+        report.raw_sections["scontrol show job"] = "available"
+    else:
+        report.raw_sections["scontrol show job"] = "unavailable"
+        report.errors.append(InvestigationError(
+            source="scontrol",
+            category=classify_error(1, scontrol_err) or "slurm_command_failed",
+            message=f"scontrol show job {job_id} failed",
+            stderr=scontrol_err or None,
+        ))
+
+    # ---- live squeue row --------------------------------------------------
+    # Cache once; SPEC requires we never call fetch_nodes/fetch_jobs in a loop.
+    live_jobs = fetch_jobs()
+    live: Job | None = next((j for j in live_jobs if j.job_id == job_id), None)
+    if live is None:
+        report.errors.append(InvestigationError(
+            source="squeue",
+            category="job_not_found",
+            message="Job not in current squeue snapshot",
+        ))
+
+    # ---- determine state and reason --------------------------------------
+    state_raw = live.state if live is not None else detail.get("JobState", "")
+    state = state_raw.upper() if state_raw else ""
+    reason_raw = ""
+    reason_source_id = ""
+    if live is not None and _present(live.reason):
+        reason_raw = live.reason
+        reason_source_id = "squeue.reason"
+    elif _present(detail.get("Reason", "")):
+        reason_raw = detail.get("Reason", "")
+        reason_source_id = "scontrol.Reason"
+
+    # ---- summary items ----------------------------------------------------
+    user = live.user if live is not None else detail.get("UserId", "")
+    if "(" in user:  # scontrol form: "alice(1001)"
+        user = user.split("(", 1)[0]
+    partition = live.partition if live is not None else detail.get("Partition", "")
+    submit_time = detail.get("SubmitTime", "")
+    start_time = detail.get("StartTime", "")
+    time_used = live.time_used if live is not None else detail.get("RunTime", "")
+    time_limit = live.time_limit if live is not None else detail.get("TimeLimit", "")
+    num_nodes = live.num_nodes if live is not None else detail.get("NumNodes", "")
+    num_cpus = live.num_cpus if live is not None else detail.get("NumCPUs", "")
+    tres = detail.get("TRES", "") or detail.get("ReqTRES", "")
+    # GPU count derived from TRES when present; this is informational only.
+    gpu_request = ""
+    if tres:
+        m = re.search(r"gres/gpu(?::[^=]+)?=(\d+)", tres)
+        if m:
+            gpu_request = m.group(1)
+
+    report.summary.extend([
+        InvestigationItem(label="State", value=_display(state_raw)),
+        InvestigationItem(label="Reason", value=_display(reason_raw)),
+        InvestigationItem(label="User", value=_display(user)),
+        InvestigationItem(label="Partition", value=_display(partition)),
+        InvestigationItem(label="Requested nodes", value=_display(num_nodes)),
+        InvestigationItem(label="Requested CPUs", value=_display(num_cpus)),
+        InvestigationItem(label="Requested GPUs", value=_display(gpu_request)),
+        InvestigationItem(label="Time used", value=_display(time_used)),
+        InvestigationItem(label="Time limit", value=_display(time_limit)),
+        InvestigationItem(label="Submit time", value=_display(submit_time)),
+        InvestigationItem(label="Start time", value=_display(start_time)),
+    ])
+
+    # ---- evidence ---------------------------------------------------------
+    if live is not None:
+        report.evidence.append(InvestigationEvidence(
+            id="squeue.state", label="State", value=live.state,
+            source="squeue", confidence="high",
+        ))
+        report.evidence.append(InvestigationEvidence(
+            id="squeue.reason", label="Reason", value=live.reason or "(none)",
+            source="squeue", confidence="high",
+        ))
+
+    if scontrol_ok:
+        if _present(detail.get("NumNodes", "")):
+            report.evidence.append(InvestigationEvidence(
+                id="scontrol.NumNodes", label="NumNodes",
+                value=detail["NumNodes"],
+                source="scontrol", confidence="high",
+            ))
+        if _present(detail.get("NumCPUs", "")):
+            report.evidence.append(InvestigationEvidence(
+                id="scontrol.NumCPUs", label="NumCPUs",
+                value=detail["NumCPUs"],
+                source="scontrol", confidence="high",
+            ))
+        if _present(detail.get("TRES", "")):
+            report.evidence.append(InvestigationEvidence(
+                id="scontrol.TRES", label="TRES",
+                value=detail["TRES"],
+                source="scontrol", confidence="high",
+            ))
+        if _present(detail.get("Partition", "")):
+            report.evidence.append(InvestigationEvidence(
+                id="scontrol.Partition", label="Partition",
+                value=detail["Partition"],
+                source="scontrol", confidence="high",
+            ))
+        # QOS visibility varies by site policy: some clusters strip the
+        # field, others expose it via accounting only. Mark as medium so
+        # the renderer surfaces the [medium] tag and the user knows to
+        # treat it as informational.
+        if _present(detail.get("QOS", "")):
+            report.evidence.append(InvestigationEvidence(
+                id="scontrol.QOS", label="QOS",
+                value=detail["QOS"],
+                source="scontrol", confidence="medium",
+            ))
+        if _present(detail.get("TimeLimit", "")):
+            report.evidence.append(InvestigationEvidence(
+                id="scontrol.TimeLimit", label="TimeLimit",
+                value=detail["TimeLimit"],
+                source="scontrol", confidence="high",
+            ))
+        if _present(detail.get("Dependency", "")):
+            report.evidence.append(InvestigationEvidence(
+                id="scontrol.Dependency", label="Dependency",
+                value=detail["Dependency"],
+                source="scontrol", confidence="high",
+            ))
+        if state in _RUNNING_STATES and _present(detail.get("NodeList", "")):
+            report.evidence.append(InvestigationEvidence(
+                id="scontrol.NodeList", label="NodeList",
+                value=detail["NodeList"],
+                source="scontrol", confidence="high",
+            ))
+
+    # ---- pending-reason explanation --------------------------------------
+    if state in _PENDING_STATES:
+        explanation = explain_pending_reason(reason_raw if _present(reason_raw) else None)
+        evidence_refs = (reason_source_id,) if reason_source_id else ()
+        report.explanations.append(InvestigationExplanation(
+            title=explanation.title,
+            detail=explanation.detail,
+            confidence=explanation.confidence,
+            evidence_refs=evidence_refs,
+        ))
+
+    # ---- dependencies ----------------------------------------------------
+    try:
+        deps = fetch_job_dependencies(job_id)
+    except Exception:
+        # Never let a parse-time error in dependency code abort the report.
+        deps = []
+        report.errors.append(InvestigationError(
+            source="scontrol",
+            category="dependency_parse_error",
+            message="Failed to parse Dependency field",
+        ))
+    for dep in deps:
+        report.evidence.append(InvestigationEvidence(
+            id=f"dep.{dep.job_id}",
+            label=f"Dependency {dep.dep_type}:{dep.job_id}",
+            value=dep.state or "(unknown)",
+            source="squeue",
+            confidence="high",
+        ))
+    if state in _PENDING_STATES and deps:
+        for dep in deps:
+            # Treat anything not COMPLETED as "unsatisfied" for explanation
+            # purposes. Slurm semantics vary across afterok/afterany/etc.
+            # but we surface them all so the user can see the full chain.
+            if (dep.state or "").upper() not in {"COMPLETED", "CD"}:
+                report.explanations.append(InvestigationExplanation(
+                    title="Dependency",
+                    detail=(
+                        f"Job is waiting on dependency "
+                        f"{dep.dep_type}:{dep.job_id} (state: "
+                        f"{dep.state or 'unknown'})."
+                    ),
+                    confidence="high",
+                    evidence_refs=("scontrol.Dependency",),
+                ))
+
+    # ---- related nodes ---------------------------------------------------
+    nodelist_expr = ""
+    if state in _RUNNING_STATES:
+        nodelist_expr = (live.nodelist if live is not None else "") or detail.get("NodeList", "")
+    elif state in _PENDING_STATES:
+        nodelist_expr = detail.get("ReqNodeList", "")
+
+    if _present(nodelist_expr):
+        try:
+            hosts_out = _run(f"scontrol show hostnames {shlex.quote(nodelist_expr)}")
+            requested_names = {h.strip() for h in hosts_out.splitlines() if h.strip()}
+        except Exception:
+            requested_names = set()
+        if requested_names:
+            # Cache fetch_nodes() result once; do NOT call inside a loop.
+            all_nodes = fetch_nodes()
+            for node in all_nodes:
+                if node.name in requested_names:
+                    report.related_nodes.append(node)
+
+    # ---- suggested actions (SPEC sec. 8.4.6) -----------------------------
+    # ALL actions here MUST be safe_for_user=True. Admin verbs (drain,
+    # resume, modify partition, set qos) are intentionally absent — Slurm
+    # itself will reject them when the underlying CLI is invoked.
+    held = "Held" in (detail.get("JobState", "") or "") or "Held" in reason_raw
+
+    report.suggested_actions.append(InvestigationAction(
+        label="Watch this job",
+        detail="Watch for state changes and notify on completion.",
+        safe_for_user=True,
+    ))
+    report.suggested_actions.append(InvestigationAction(
+        label="Inspect raw scontrol detail",
+        detail="Open the full scontrol show job output.",
+        safe_for_user=True,
+    ))
+    report.suggested_actions.append(InvestigationAction(
+        label="Inspect logs",
+        detail="Tail stdout/stderr if visible.",
+        safe_for_user=True,
+    ))
+    report.suggested_actions.append(InvestigationAction(
+        label="Copy investigation report",
+        detail="Copy this report to clipboard for sharing.",
+        safe_for_user=True,
+    ))
+
+    if state in _PENDING_STATES and held:
+        report.suggested_actions.append(InvestigationAction(
+            label="Release this job",
+            detail="If you are the owner, release the hold.",
+            safe_for_user=True,
+        ))
+    if state in _PENDING_STATES and deps:
+        report.suggested_actions.append(InvestigationAction(
+            label="Inspect dependency tree",
+            detail="Open the dependency view.",
+            safe_for_user=True,
+        ))
+    if state in _RUNNING_STATES:
+        report.suggested_actions.append(InvestigationAction(
+            label="Cancel this job",
+            detail="Send scancel; only succeeds if you own the job.",
+            safe_for_user=True,
+        ))
+        report.suggested_actions.append(InvestigationAction(
+            label="Attach to a running node",
+            detail="Open an interactive shell via srun.",
+            safe_for_user=True,
+        ))
+    if state in _TERMINAL_STATES:
+        report.suggested_actions.append(InvestigationAction(
+            label="Inspect sacct accounting",
+            detail="View elapsed time, exit code, efficiency if available.",
+            safe_for_user=True,
+        ))
+
+    return report
 
 
 # ---------------------------------------------------------------------------
