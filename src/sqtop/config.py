@@ -63,11 +63,22 @@ theme: str — Textual theme name applied at startup.
 
 [clipboard]
   transport: str — clipboard transport: "auto", "osc52", or "subprocess".
+
+Writes are round-trip preserving: comments, key order, unknown sections, and
+unknown keys present in the on-disk file are retained when only specific keys
+are mutated by save() / update(). Persisted writes are atomic via a same-
+directory temp file plus os.replace().
 """
 from __future__ import annotations
 
+import os
+import tempfile
 import tomllib
 from pathlib import Path
+
+import tomlkit
+from tomlkit import TOMLDocument
+from tomlkit.items import Table
 
 _CONFIG_DIR = Path.home() / ".config" / "sqtop"
 _CONFIG_FILE = _CONFIG_DIR / "config.toml"
@@ -128,6 +139,36 @@ _DEFAULTS: dict = {
     },
 }
 
+# Documented section order (SPEC §16.9) plus the one-line section comments used
+# when writing a fresh config for a brand-new install.
+_SECTION_ORDER: list[str] = [
+    "interval",
+    "jobs",
+    "attach",
+    "ui",
+    "safety",
+    "health",
+    "view_state",
+    "columns",
+    "notifications",
+    "remote",
+    "clipboard",
+]
+
+_SECTION_COMMENTS: dict[str, str] = {
+    "interval": "Auto-refresh seconds per view.",
+    "jobs": "Jobs view column width caps.",
+    "attach": "Attach-via-srun behavior.",
+    "ui": "UI visual behavior and confirmation toggles.",
+    "safety": "Confirmation prompts for destructive actions.",
+    "health": "Health view diagnostics and warning thresholds.",
+    "view_state": "Persisted sort/filter state.",
+    "columns": "Hidden columns and explicit column order.",
+    "notifications": "Desktop notification behavior.",
+    "remote": "Default SSH host for remote mode.",
+    "clipboard": "Clipboard transport selection.",
+}
+
 
 def _defaults() -> dict:
     return {
@@ -147,6 +188,11 @@ def _defaults() -> dict:
 
 
 def _toml_escape(value: str) -> str:
+    """Escape a string for inclusion inside TOML basic-string literals.
+
+    Retained for legacy callers and tests; tomlkit-based writes do not need
+    this because tomlkit handles escaping internally.
+    """
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
@@ -247,170 +293,154 @@ def save(theme: str, interval: float) -> None:
     The single-knob "Set refresh: Xs" UX writes the same value to jobs/nodes/
     partitions; per-view tuning happens via direct config edits or update().
     """
-    cfg = load()
-    cfg["theme"] = theme
     secs = float(interval)
-    cfg["interval"] = {"jobs": secs, "nodes": secs, "partitions": secs}
-    _write(cfg)
+    _apply_updates_to_disk(
+        {
+            "theme": theme,
+            "interval": {"jobs": secs, "nodes": secs, "partitions": secs},
+        }
+    )
 
 
 def update(overrides: dict) -> None:
     """Update config with shallow+section merge and persist."""
-    cfg = load()
-    for key, value in overrides.items():
-        if isinstance(value, dict) and isinstance(cfg.get(key), dict):
-            cfg[key] = {**cfg[key], **value}
-        else:
-            cfg[key] = value
-    _write(cfg)
+    _apply_updates_to_disk(overrides)
 
 
-def _toml_str_list(lst: list) -> str:
-    return "[" + ", ".join(f'"{x}"' for x in lst) + "]"
+# ── tomlkit round-trip writer ────────────────────────────────────────────────
 
 
-def _toml_float(value: float) -> str:
-    """Format a float for TOML output, keeping integer-valued floats readable."""
-    f = float(value)
-    if f == int(f):
-        return f"{f:.1f}"
-    return repr(f)
+def _default_document() -> TOMLDocument:
+    """Build a fresh tomlkit document seeded with documented defaults."""
+    doc = tomlkit.document()
+    doc.add("theme", _DEFAULTS["theme"])
+    for section in _SECTION_ORDER:
+        comment = _SECTION_COMMENTS.get(section)
+        if comment:
+            doc.add(tomlkit.comment(comment))
+        table = tomlkit.table()
+        for key, value in _DEFAULTS[section].items():
+            table.add(key, _to_tomlkit_value(value))
+        doc.add(section, table)
+    return doc
 
 
-def _write(cfg: dict) -> None:
-    jobs = cfg.get("jobs", {})
-    attach = cfg.get("attach", {})
-    ui = cfg.get("ui", {})
-    safety = cfg.get("safety", {})
-    health = cfg.get("health", {})
-    view_state = cfg.get("view_state", {})
-    columns = cfg.get("columns", {})
-    notifications = cfg.get("notifications", {})
-    remote = cfg.get("remote", {})
-    clipboard = cfg.get("clipboard", {})
+def _to_tomlkit_value(value):
+    """Convert a plain Python value to its tomlkit equivalent.
 
-    enabled = bool(attach.get("enabled", _DEFAULTS["attach"]["enabled"]))
-    default_command = str(attach.get("default_command", _DEFAULTS["attach"]["default_command"]))
-    extra_args = str(attach.get("extra_args", _DEFAULTS["attach"]["extra_args"]))
-    expert_mode = bool(ui.get("expert_mode", _DEFAULTS["ui"]["expert_mode"]))
-    show_palette_hints = bool(ui.get("show_palette_hints", _DEFAULTS["ui"]["show_palette_hints"]))
-    confirm_cancel_single = bool(
-        safety.get("confirm_cancel_single", _DEFAULTS["safety"]["confirm_cancel_single"])
-    )
-    confirm_bulk_actions = bool(
-        safety.get("confirm_bulk_actions", _DEFAULTS["safety"]["confirm_bulk_actions"])
-    )
-    health_enabled = bool(health.get("enabled", _DEFAULTS["health"]["enabled"]))
-    try:
-        history_size = int(health.get("history_size", _DEFAULTS["health"]["history_size"]))
-    except (TypeError, ValueError):
-        history_size = int(_DEFAULTS["health"]["history_size"])
-    try:
-        warn_pending_ratio = float(
-            health.get("warn_pending_ratio", _DEFAULTS["health"]["warn_pending_ratio"])
-        )
-    except (TypeError, ValueError):
-        warn_pending_ratio = float(_DEFAULTS["health"]["warn_pending_ratio"])
-    try:
-        warn_down_nodes = int(health.get("warn_down_nodes", _DEFAULTS["health"]["warn_down_nodes"]))
-    except (TypeError, ValueError):
-        warn_down_nodes = int(_DEFAULTS["health"]["warn_down_nodes"])
+    tomlkit accepts Python primitives directly when added to tables; this
+    helper exists to normalize lists (which we want to stay inline) and to
+    keep the call sites readable.
+    """
+    if isinstance(value, list):
+        arr = tomlkit.array()
+        for item in value:
+            arr.append(item)
+            arr.multiline(False)
+        return arr
+    return value
 
-    theme = str(cfg.get("theme", _DEFAULTS["theme"]))
 
-    interval_cfg = cfg.get("interval", _DEFAULTS["interval"])
-    if not isinstance(interval_cfg, dict):
-        interval_cfg = {}
-    def _iv(key: str) -> float:
+def _read_or_init_document() -> TOMLDocument:
+    """Read the on-disk config as a tomlkit document, or build a default doc.
+
+    On parse failure of an existing file, fall back to the default document
+    rather than corrupting the file further. Callers about to write should
+    overwrite atomically, so a malformed file becomes well-formed after the
+    next save.
+    """
+    if _CONFIG_FILE.exists():
         try:
-            return float(interval_cfg.get(key, _DEFAULTS["interval"][key]))
-        except (TypeError, ValueError):
-            return float(_DEFAULTS["interval"][key])
-    iv_jobs = _iv("jobs")
-    iv_nodes = _iv("nodes")
-    iv_parts = _iv("partitions")
+            text = _CONFIG_FILE.read_text(encoding="utf-8")
+            return tomlkit.parse(text)
+        except Exception:
+            return _default_document()
+    return _default_document()
 
-    jobs_sort_col = str(view_state.get("jobs_sort_col", _DEFAULTS["view_state"]["jobs_sort_col"]))
-    jobs_sort_reversed = bool(view_state.get("jobs_sort_reversed", _DEFAULTS["view_state"]["jobs_sort_reversed"]))
-    nodes_sort_col = str(view_state.get("nodes_sort_col", _DEFAULTS["view_state"]["nodes_sort_col"]))
-    nodes_sort_reversed = bool(view_state.get("nodes_sort_reversed", _DEFAULTS["view_state"]["nodes_sort_reversed"]))
-    partitions_sort_col = str(view_state.get("partitions_sort_col", _DEFAULTS["view_state"]["partitions_sort_col"]))
-    partitions_sort_reversed = bool(view_state.get("partitions_sort_reversed", _DEFAULTS["view_state"]["partitions_sort_reversed"]))
 
-    jobs_hidden = list(columns.get("jobs_hidden", []))
-    nodes_hidden = list(columns.get("nodes_hidden", []))
-    partitions_hidden = list(columns.get("partitions_hidden", []))
-    jobs_order = [x for x in columns.get("jobs_order", []) if isinstance(x, str)]
-    nodes_order = [x for x in columns.get("nodes_order", []) if isinstance(x, str)]
-    partitions_order = [x for x in columns.get("partitions_order", []) if isinstance(x, str)]
+def _ensure_table(doc: TOMLDocument, section: str) -> Table:
+    """Return the named section as a tomlkit Table, creating it if absent."""
+    existing = doc.get(section)
+    if isinstance(existing, Table):
+        return existing
+    # Either missing or a non-table value (e.g. legacy bare scalar). Replace it
+    # with a fresh table; the caller is responsible for filling in keys.
+    if section in doc:
+        del doc[section]
+    table = tomlkit.table()
+    doc.add(section, table)
+    return table
 
-    desktop_enabled = bool(notifications.get("desktop_enabled", _DEFAULTS["notifications"]["desktop_enabled"]))
 
-    remote_host = str(remote.get("host", _DEFAULTS["remote"]["host"]))
-    clipboard_transport = str(clipboard.get("transport", _DEFAULTS["clipboard"]["transport"]))
+def _migrate_legacy_interval(doc: TOMLDocument) -> None:
+    """Promote a legacy bare top-level `interval = X` scalar into [interval].
 
+    TOML 1.0 disallows mixing `interval = 3.0` and `[interval]` in the same
+    document. When the existing file uses the legacy bare form, broadcast the
+    value to all three view keys before any edit so the resulting document is
+    valid TOML and matches the shape produced by save()/update().
+    """
+    legacy = doc.get("interval")
+    if isinstance(legacy, bool) or not isinstance(legacy, (int, float)):
+        return
+    broadcast = float(legacy)
+    del doc["interval"]
+    table = tomlkit.table()
+    for key in _DEFAULTS["interval"].keys():
+        table.add(key, broadcast)
+    doc.add("interval", table)
+
+
+def _apply_section_updates(table: Table, updates: dict) -> None:
+    """Merge updates into a tomlkit Table, preserving unrelated keys."""
+    for key, value in updates.items():
+        table[key] = _to_tomlkit_value(value)
+
+
+def _apply_updates_to_disk(updates: dict) -> None:
+    """Round-trip-preserving writer that mutates only the keys requested.
+
+    Reads the existing config (or seeds a default document for new installs),
+    applies the requested mutations into the matching tomlkit nodes, then
+    writes the document atomically via a same-directory temp file plus
+    os.replace().
+    """
+    doc = _read_or_init_document()
+    _migrate_legacy_interval(doc)
+
+    nested_sections = set(_SECTION_ORDER)
+
+    for key, value in updates.items():
+        if key in nested_sections and isinstance(value, dict):
+            table = _ensure_table(doc, key)
+            _apply_section_updates(table, value)
+        else:
+            # Top-level scalar (e.g. "theme") or unrecognized top-level key.
+            doc[key] = _to_tomlkit_value(value)
+
+    _atomic_write(tomlkit.dumps(doc))
+
+
+def _atomic_write(text: str) -> None:
+    """Write *text* to _CONFIG_FILE atomically.
+
+    Uses a temp file in the same directory plus os.replace() so the on-disk
+    file either reflects the previous contents or the new contents — never a
+    partial write. On any failure the temp file is unlinked.
+    """
     _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    lines = [
-        f'theme = "{theme}"',
-        "",
-        "[interval]",
-        f"jobs = {_toml_float(iv_jobs)}",
-        f"nodes = {_toml_float(iv_nodes)}",
-        f"partitions = {_toml_float(iv_parts)}",
-        "",
-        "[jobs]",
-        f'name_max = {int(jobs.get("name_max", _DEFAULTS["jobs"]["name_max"]))}',
-        f'user_max = {int(jobs.get("user_max", _DEFAULTS["jobs"]["user_max"]))}',
-        f'partition_max = {int(jobs.get("partition_max", _DEFAULTS["jobs"]["partition_max"]))}',
-        (
-            "nodelist_reason_max = "
-            f'{int(jobs.get("nodelist_reason_max", _DEFAULTS["jobs"]["nodelist_reason_max"]))}'
-        ),
-        f'qos_max = {int(jobs.get("qos_max", _DEFAULTS["jobs"]["qos_max"]))}',
-        "",
-        "[attach]",
-        f'enabled = {"true" if enabled else "false"}',
-        f'default_command = "{_toml_escape(default_command)}"',
-        f'extra_args = "{_toml_escape(extra_args)}"',
-        "",
-        "[ui]",
-        f'expert_mode = {"true" if expert_mode else "false"}',
-        f'show_palette_hints = {"true" if show_palette_hints else "false"}',
-        "",
-        "[safety]",
-        f'confirm_cancel_single = {"true" if confirm_cancel_single else "false"}',
-        f'confirm_bulk_actions = {"true" if confirm_bulk_actions else "false"}',
-        "",
-        "[health]",
-        f'enabled = {"true" if health_enabled else "false"}',
-        f"history_size = {history_size}",
-        f"warn_pending_ratio = {warn_pending_ratio}",
-        f"warn_down_nodes = {warn_down_nodes}",
-        "",
-        "[view_state]",
-        f'jobs_sort_col = "{_toml_escape(jobs_sort_col)}"',
-        f'jobs_sort_reversed = {"true" if jobs_sort_reversed else "false"}',
-        f'nodes_sort_col = "{_toml_escape(nodes_sort_col)}"',
-        f'nodes_sort_reversed = {"true" if nodes_sort_reversed else "false"}',
-        f'partitions_sort_col = "{_toml_escape(partitions_sort_col)}"',
-        f'partitions_sort_reversed = {"true" if partitions_sort_reversed else "false"}',
-        "",
-        "[columns]",
-        f"jobs_hidden = {_toml_str_list(jobs_hidden)}",
-        f"nodes_hidden = {_toml_str_list(nodes_hidden)}",
-        f"partitions_hidden = {_toml_str_list(partitions_hidden)}",
-        f"jobs_order = {_toml_str_list(jobs_order)}",
-        f"nodes_order = {_toml_str_list(nodes_order)}",
-        f"partitions_order = {_toml_str_list(partitions_order)}",
-        "",
-        "[notifications]",
-        f'desktop_enabled = {"true" if desktop_enabled else "false"}',
-        "",
-        "[remote]",
-        f'host = "{_toml_escape(remote_host)}"',
-        "",
-        "[clipboard]",
-        f'transport = "{_toml_escape(clipboard_transport)}"',
-        "",
-    ]
-    _CONFIG_FILE.write_text("\n".join(lines), encoding="utf-8")
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=".config.", suffix=".toml.tmp", dir=str(_CONFIG_DIR)
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, _CONFIG_FILE)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise

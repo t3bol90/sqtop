@@ -193,16 +193,17 @@ def test_load_malformed_health_history_size_falls_back_to_default(temp_config):
     # (read-time coercion is intentionally minimal in PR 1).
     cfg = config.load()
     assert "health" in cfg
-    # _write must also tolerate the bad value without crashing.
+    # The round-trip writer must tolerate the bad value without crashing and
+    # MUST NOT silently rewrite a key the caller did not touch (SPEC §16.6).
     config.update({"theme": "dracula"})
-    cfg2 = config.load()
-    assert cfg2["health"]["history_size"] == 100
+    rewritten = cfg_file.read_text(encoding="utf-8")
+    assert 'history_size = "bad"' in rewritten
+    assert 'theme = "dracula"' in rewritten
 
 
 # ── round-trip preservation: PR 1.5 target ────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="round-trip preservation not implemented yet (PR 1.5)")
-def test_xfail_round_trip_preserves_unknown_section_and_comments(temp_config):
+def test_round_trip_preserves_unknown_section_and_comments(temp_config):
     cfg_file = temp_config / "config.toml"
     original = (
         "# user comment line\n"
