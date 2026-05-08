@@ -2,9 +2,10 @@
 
 import argparse
 import os
+from pathlib import Path
 
 from .app import SqtopApp
-from . import config, slurm
+from . import config, investigation, slurm
 
 
 def main() -> None:
@@ -36,12 +37,25 @@ def main() -> None:
 
     host = args.remote.strip()
     key = args.ssh_key.strip()
+    cfg: dict | None = None
     if not host:
         cfg = config.load()
         r = cfg.get("remote", {})
         host = str(r.get("host", "")).strip()
     if host:
         slurm.set_remote(host, key)
+
+    # Site-specific pending-reason overrides (SPEC §20.3). Reuses the cfg
+    # already loaded for remote resolution when possible to avoid a second
+    # disk read.
+    if cfg is None:
+        cfg = config.load()
+    reasons_path = str(cfg.get("investigation", {}).get("reasons_path", "")).strip()
+    if reasons_path:
+        p = Path(reasons_path).expanduser()
+        if not p.is_absolute():
+            p = (config._CONFIG_DIR / p).resolve()
+        investigation.register_user_reasons(investigation.load_user_reasons(p))
 
     SqtopApp().run()
 

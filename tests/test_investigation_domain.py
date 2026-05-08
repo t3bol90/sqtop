@@ -21,9 +21,19 @@ from sqtop.investigation import (
     InvestigationTarget,
     explain_node_state,
     explain_pending_reason,
+    register_user_reasons,
     render_report,
 )
 from sqtop.slurm import Job, Node
+
+
+# Defensive: ensure no other test file leaked _USER_REASONS state into ours.
+# Mirrors the autouse fixture in test_investigation_user_reasons.py.
+@pytest.fixture(autouse=True)
+def _reset_user_reasons():
+    register_user_reasons({})
+    yield
+    register_user_reasons({})
 
 
 # ---------------------------------------------------------------------------
@@ -236,6 +246,29 @@ def test_explain_pending_reason_lookup_is_case_sensitive():
     exp = explain_pending_reason("resources")
     assert exp.confidence == "low"
     assert "unrecognized" in exp.title.lower()
+
+
+def test_existing_explain_pending_reason_unaffected_when_user_reasons_empty():
+    """Documents the contract: an empty _USER_REASONS map (the default) must
+    not change behavior of explain_pending_reason() for any of the built-in
+    reason keys, the unknown-fallback path, or the empty/null path.
+
+    The 14 reason tests above already imply this; this test makes the
+    contract explicit and is the regression guard for the override path
+    added in PR 8.
+    """
+    # Built-in: Resources -> medium.
+    assert explain_pending_reason("Resources").confidence == "medium"
+    # Built-in: Priority -> high.
+    assert explain_pending_reason("Priority").confidence == "high"
+    # Unknown -> low + "unrecognized".
+    unk = explain_pending_reason("DefinitelyNotAReason")
+    assert unk.confidence == "low"
+    assert "unrecognized" in unk.title.lower()
+    # Empty -> low + "no pending reason".
+    null = explain_pending_reason("")
+    assert null.confidence == "low"
+    assert "no pending reason" in null.title.lower()
 
 
 # ---------------------------------------------------------------------------

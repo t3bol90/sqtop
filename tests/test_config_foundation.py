@@ -225,3 +225,48 @@ def test_round_trip_preserves_unknown_section_and_comments(temp_config):
     assert "[my_custom]" in rewritten
     assert 'foo = "bar"' in rewritten
     assert "my_unknown_ui_key" in rewritten
+
+
+# ── [investigation] section: PR 8 contract ────────────────────────────────────
+
+
+def test_load_returns_investigation_section_with_reasons_path_default(temp_config):
+    cfg = config.load()
+    assert "investigation" in cfg
+    assert cfg["investigation"]["reasons_path"] == ""
+
+
+def test_update_persists_reasons_path(temp_config):
+    config.update({"investigation": {"reasons_path": "/tmp/reasons.toml"}})
+
+    cfg = config.load()
+    assert cfg["investigation"]["reasons_path"] == "/tmp/reasons.toml"
+
+    raw = (temp_config / "config.toml").read_text(encoding="utf-8")
+    assert "[investigation]" in raw
+    assert 'reasons_path = "/tmp/reasons.toml"' in raw
+
+
+def test_load_partial_investigation_section_fills_default(temp_config):
+    cfg_file = temp_config / "config.toml"
+    cfg_file.write_text("[investigation]\n", encoding="utf-8")
+    cfg = config.load()
+    assert cfg["investigation"]["reasons_path"] == ""
+
+
+def test_update_investigation_preserves_unknown_user_keys(temp_config):
+    """The [investigation] section participates in the round-trip writer
+    contract from PR 1.5: unknown keys present in the on-disk file are
+    retained when only documented keys are mutated by update().
+    """
+    cfg_file = temp_config / "config.toml"
+    cfg_file.write_text(
+        "[investigation]\n"
+        'reasons_path = "/old/reasons.toml"\n'
+        'my_unknown_inv_key = "preserved"\n',
+        encoding="utf-8",
+    )
+    config.update({"investigation": {"reasons_path": "/new/reasons.toml"}})
+    rewritten = cfg_file.read_text(encoding="utf-8")
+    assert 'reasons_path = "/new/reasons.toml"' in rewritten
+    assert 'my_unknown_inv_key = "preserved"' in rewritten

@@ -9,8 +9,10 @@ plain-text-ready report.
 """
 from __future__ import annotations
 
+import tomllib
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
 
 # Re-import existing data types so callers do not need two imports.
@@ -31,6 +33,8 @@ __all__ = [
     "explain_pending_reason",
     "explain_node_state",
     "render_report",
+    "load_user_reasons",
+    "register_user_reasons",
 ]
 
 InvestigationKind = Literal["job", "node"]
@@ -198,6 +202,88 @@ _PENDING_REASONS: dict[str, tuple[str, str, Confidence]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Site-supplied pending-reason overrides (SPEC §20.3)
+# ---------------------------------------------------------------------------
+
+# Module-level mutable state for user-supplied reason overrides.
+# Empty by default. Replaced wholesale by register_user_reasons().
+# Mirrors the existing module-level state pattern used in slurm.py
+# (_SSH_HOST, _SSH_KEY, _COMMAND_HISTORY).
+_USER_REASONS: dict[str, "InvestigationExplanation"] = {}
+
+
+def register_user_reasons(reasons: dict[str, "InvestigationExplanation"]) -> None:
+    """Replace the user-supplied reason map.
+
+    Pass an empty dict to clear. Subsequent ``explain_pending_reason()``
+    calls consult the user map first, falling back to the built-in
+    ``_PENDING_REASONS``, then to the unknown-reason default.
+    """
+    global _USER_REASONS
+    _USER_REASONS = dict(reasons)
+
+
+def load_user_reasons(path: str | Path | None) -> dict[str, "InvestigationExplanation"]:
+    """Read a TOML file describing pending-reason overrides.
+
+    File format::
+
+        [SiteSpecificFoo]
+        title = "Site-specific foo"
+        detail = "Foo is unavailable due to local cluster policy."
+        confidence = "medium"
+
+        [AnotherReason]
+        title = "..."
+        detail = "..."
+        confidence = "high"
+
+    Each top-level table key becomes a Slurm reason string. Each table
+    must define ``title``, ``detail``, and ``confidence`` (one of
+    "high"/"medium"/"low").
+
+    Returns a dict mapping reason -> InvestigationExplanation. On any
+    I/O error, malformed TOML, missing required field, or invalid
+    confidence value, the offending entry is skipped silently and the
+    remaining entries are returned. An empty path or None returns
+    ``{}``. A missing file returns ``{}``. The function never raises
+    on these paths; callers can rely on degraded-mode behavior.
+    """
+    if not path:
+        return {}
+    p = Path(path).expanduser()
+    if not p.is_file():
+        return {}
+    try:
+        with p.open("rb") as f:
+            data = tomllib.load(f)
+    except (tomllib.TOMLDecodeError, OSError):
+        return {}
+
+    valid_confidences: set[str] = {"high", "medium", "low"}
+    result: dict[str, InvestigationExplanation] = {}
+    for reason_key, fields in data.items():
+        if not isinstance(reason_key, str) or not reason_key:
+            continue
+        if not isinstance(fields, dict):
+            continue
+        title = fields.get("title")
+        detail = fields.get("detail")
+        confidence = fields.get("confidence")
+        if not isinstance(title, str) or not isinstance(detail, str):
+            continue
+        if confidence not in valid_confidences:
+            continue
+        result[reason_key] = InvestigationExplanation(
+            title=title,
+            detail=detail,
+            confidence=confidence,  # type: ignore[arg-type]
+            evidence_refs=(),
+        )
+    return result
+
+
 def explain_pending_reason(reason: str | None) -> InvestigationExplanation:
     """Map a Slurm pending reason to a user-facing explanation.
 
@@ -205,6 +291,9 @@ def explain_pending_reason(reason: str | None) -> InvestigationExplanation:
     Empty / None / "(null)" reasons return a low-confidence
     "no reason reported" explanation. Unknown reasons echo the raw
     string so the user can still copy/paste it into a search.
+
+    Site-supplied overrides registered via ``register_user_reasons()``
+    take precedence over the built-in ``_PENDING_REASONS`` map.
     """
     # "(null)" is a Slurm sentinel for "field not provided"; we treat
     # it the same as an empty reason per SPEC.
@@ -217,6 +306,10 @@ def explain_pending_reason(reason: str | None) -> InvestigationExplanation:
             ),
             confidence="low",
         )
+
+    user_entry = _USER_REASONS.get(reason)
+    if user_entry is not None:
+        return user_entry
 
     entry = _PENDING_REASONS.get(reason)
     if entry is None:

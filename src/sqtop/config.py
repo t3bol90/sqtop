@@ -64,6 +64,11 @@ theme: str — Textual theme name applied at startup.
 [clipboard]
   transport: str — clipboard transport: "auto", "osc52", or "subprocess".
 
+[investigation]
+  reasons_path: str — path to a TOML file extending pending-reason
+    explanations (SPEC §20.3). Empty = built-in map only. Relative paths
+    resolve against the config directory.
+
 Writes are round-trip preserving: comments, key order, unknown sections, and
 unknown keys present in the on-disk file are retained when only specific keys
 are mutated by save() / update(). Persisted writes are atomic via a same-
@@ -137,6 +142,9 @@ _DEFAULTS: dict = {
     "clipboard": {
         "transport": "auto",
     },
+    "investigation": {
+        "reasons_path": "",
+    },
 }
 
 # Documented section order (SPEC §16.9) plus the one-line section comments used
@@ -148,6 +156,7 @@ _SECTION_ORDER: list[str] = [
     "ui",
     "safety",
     "health",
+    "investigation",
     "view_state",
     "columns",
     "notifications",
@@ -162,6 +171,7 @@ _SECTION_COMMENTS: dict[str, str] = {
     "ui": "UI visual behavior and confirmation toggles.",
     "safety": "Confirmation prompts for destructive actions.",
     "health": "Health view diagnostics and warning thresholds.",
+    "investigation": "Investigation Mode behavior. Set reasons_path to extend pending-reason explanations from a TOML file.",
     "view_state": "Persisted sort/filter state.",
     "columns": "Hidden columns and explicit column order.",
     "notifications": "Desktop notification behavior.",
@@ -184,6 +194,7 @@ def _defaults() -> dict:
         "notifications": dict(_DEFAULTS["notifications"]),
         "remote": dict(_DEFAULTS["remote"]),
         "clipboard": dict(_DEFAULTS["clipboard"]),
+        "investigation": dict(_DEFAULTS["investigation"]),
     }
 
 
@@ -237,6 +248,7 @@ def load() -> dict:
             "notifications",
             "remote",
             "clipboard",
+            "investigation",
         }
         # Copy bare top-level keys (e.g. theme) but skip nested-table keys so
         # the legacy bare `interval = 2.0` does not overwrite the dict default.
@@ -303,6 +315,10 @@ def load() -> dict:
         if isinstance(data.get("clipboard"), dict):
             clipboard.update(data["clipboard"])
         cfg["clipboard"] = clipboard
+        investigation_cfg = dict(_DEFAULTS["investigation"])
+        if isinstance(data.get("investigation"), dict):
+            investigation_cfg.update(data["investigation"])
+        cfg["investigation"] = investigation_cfg
         return cfg
     except Exception:
         return _defaults()
