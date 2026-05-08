@@ -95,6 +95,7 @@ class NodesView(BaseDataTableView[Node]):
 
     BINDINGS = [
         Binding("enter", "open_node", "Open node", show=True),
+        Binding("I", "investigate_node", "Investigate", show=True),
         Binding("s", "sort_state", show=False),
         Binding("p", "sort_cpu", show=False),
         Binding("m", "sort_mem", show=False),
@@ -243,6 +244,17 @@ class NodesView(BaseDataTableView[Node]):
         """Visual yank when in visual mode; no-op otherwise."""
         if self._visual_active:
             self.action_visual_yank()
+
+    def action_investigate_node(self) -> None:
+        """Open NodeInvestigationScreen for the node under the cursor."""
+        rows = self._last_sorted_nodes
+        table = self.query_one(CyclicDataTable)
+        row_idx = table.cursor_row
+        if row_idx >= len(rows):
+            return
+        node = rows[row_idx]
+        from .investigate import NodeInvestigationScreen
+        self.app.push_screen(NodeInvestigationScreen(node.name))
 
     # ── Column reorder ────────────────────────────────────────────────────────
 

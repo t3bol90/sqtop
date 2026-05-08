@@ -432,6 +432,32 @@ class SqtopApp(App):
             self._action_investigate_by_id,
             discover=False,
         )
+        yield SystemCommand(
+            "Investigate node by name",
+            "Open the investigation report for a node name you type",
+            self._action_investigate_node_by_name,
+            discover=False,
+        )
+
+    def _action_investigate_node_by_name(self) -> None:
+        """Prompt for a node name, then open NodeInvestigationScreen."""
+        from .views.attach_prompt import AttachNodePromptScreen
+        from .views.investigate import NodeInvestigationScreen
+
+        def handle(value: str | None) -> None:
+            name = (value or "").strip()
+            if not name:
+                return
+            self.push_screen(NodeInvestigationScreen(name))
+
+        self.push_screen(
+            AttachNodePromptScreen(
+                "",
+                title_override="Node name to investigate",
+                placeholder_override="node name (e.g. gpu-a100-02)",
+            ),
+            handle,
+        )
 
     def _action_investigate_by_id(self) -> None:
         """Prompt for a job ID, then open JobInvestigationScreen."""

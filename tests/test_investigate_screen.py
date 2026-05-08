@@ -1,4 +1,8 @@
-"""Tests for JobInvestigationScreen and the I keybind on JobsView (PR 3b)."""
+"""Tests for the investigation screens and the I keybind wiring.
+
+Covers PR 3b (JobInvestigationScreen + JobsView ``I``) and PR 4-ui
+(NodeInvestigationScreen + NodesView ``I``).
+"""
 from __future__ import annotations
 
 import shutil
@@ -308,3 +312,258 @@ async def test_palette_offers_investigate_by_id():
         await pilot.pause()
         labels = [cmd.title for cmd in pilot.app.get_system_commands(pilot.app.screen)]
         assert "Investigate job by ID" in labels
+
+
+# ---------------------------------------------------------------------------
+# Node investigation — PR 4-ui
+# ---------------------------------------------------------------------------
+
+
+def _fake_node_report(
+    node_name: str = "gpu-a100-02",
+    *,
+    with_error: bool = False,
+) -> InvestigationReport:
+    """Build a minimally-populated node InvestigationReport for tests.
+
+    Mirrors :func:`_fake_report` but with ``kind="node"`` so the renderer
+    emits the SPEC sec. 22 layout.
+    """
+    target = InvestigationTarget(kind="node", identifier=node_name, source="cursor")
+    report = InvestigationReport(
+        target=target,
+        generated_at=datetime(2026, 5, 8, 10, 14, 0),
+    )
+    report.summary.append(InvestigationItem(label="State", value="DRAIN"))
+    report.evidence.append(
+        InvestigationEvidence(
+            id="sinfo.state",
+            label="sinfo state",
+            value="drain",
+            source="sinfo",
+            confidence="high",
+        )
+    )
+    report.explanations.append(
+        InvestigationExplanation(
+            title="Node is draining",
+            detail=(
+                "The node is draining; running jobs are allowed to finish "
+                "but no new jobs will be scheduled here until it returns to idle."
+            ),
+            confidence="medium",
+        )
+    )
+    report.suggested_actions.append(
+        InvestigationAction(
+            label="Open node detail",
+            detail="Inspect raw scontrol show node output",
+            safe_for_user=True,
+        )
+    )
+    if with_error:
+        report.errors.append(
+            InvestigationError(
+                source="scontrol",
+                category="slurm_permission_denied",
+                message=f"scontrol show node {node_name} failed",
+                stderr="permission denied",
+            )
+        )
+    return report
+
+
+async def test_node_investigate_screen_renders_report_text(monkeypatch):
+    """Mounting NodeInvestigationScreen runs the worker and populates the TextArea."""
+    from sqtop.views import investigate as investigate_mod
+    from sqtop.views.investigate import NodeInvestigationScreen
+    from textual.widgets import TextArea
+
+    monkeypatch.setattr(
+        investigate_mod, "investigate_node", lambda name: _fake_node_report(name)
+    )
+
+    app = _make_app(120, 30)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.app.push_screen(NodeInvestigationScreen("gpu-a100-02"))
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        assert isinstance(screen, NodeInvestigationScreen)
+        ta = screen.query_one(TextArea)
+        text = ta.text
+        # Header line from render_report.
+        assert "Investigate Node gpu-a100-02" in text
+        # render_report emits exp.detail under the explanation header.
+        assert "The node is draining" in text
+
+
+async def test_node_investigate_screen_copy_report_yields_plain_text(monkeypatch):
+    """copy_pane returns a plain-text payload with the SPEC sec. 22 section markers."""
+    from sqtop.views import investigate as investigate_mod
+    from sqtop.views.investigate import NodeInvestigationScreen
+
+    monkeypatch.setattr(
+        investigate_mod, "investigate_node", lambda name: _fake_node_report(name)
+    )
+
+    app = _make_app(120, 30)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.app.push_screen(NodeInvestigationScreen("gpu-a100-02"))
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        label, payload, line_count = screen.copy_pane()
+
+        assert label == "Investigation Node gpu-a100-02"
+        # SPEC sec. 22 layout markers — render_report's section headers.
+        assert "Summary" in payload
+        assert "Slurm evidence" in payload
+        assert "Suggested next actions" in payload
+        # Plain ASCII; no Rich markup tags.
+        for marker in ("[red]", "[/red]", "[bold]", "[/bold]", "[yellow]", "[cyan]"):
+            assert marker not in payload, f"unexpected Rich tag {marker!r} in payload"
+        assert line_count == len(payload.splitlines())
+
+
+async def test_node_investigate_screen_handles_partial_report(monkeypatch):
+    """A node report with errors renders the Errors section and the category string."""
+    from sqtop.views import investigate as investigate_mod
+    from sqtop.views.investigate import NodeInvestigationScreen
+    from textual.widgets import TextArea
+
+    monkeypatch.setattr(
+        investigate_mod,
+        "investigate_node",
+        lambda name: _fake_node_report(name, with_error=True),
+    )
+
+    app = _make_app(120, 30)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        await pilot.app.push_screen(NodeInvestigationScreen("gpu-a100-02"))
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+
+        screen = pilot.app.screen
+        ta = screen.query_one(TextArea)
+        text = ta.text
+        assert "Errors" in text
+        assert "slurm_permission_denied" in text
+
+
+def _make_node(name: str = "gpu-a100-02"):
+    """Build a minimal Node for cursor-row tests."""
+    from sqtop.slurm import Node
+
+    return Node(
+        name=name,
+        state="idle",
+        partition="gpu",
+        cpus_alloc="0",
+        cpus_total="64",
+        memory_free="200000",
+        memory_total="256000",
+        load="0.50",
+        gpu_alloc=0,
+        gpu_total=4,
+    )
+
+
+def test_nodes_view_I_binding_pushes_node_investigation(monkeypatch):
+    """action_investigate_node pushes NodeInvestigationScreen for the cursor row."""
+    from sqtop.views.investigate import NodeInvestigationScreen
+    from sqtop.views.nodes import NodesView
+
+    view = NodesView()
+    target = _make_node("gpu-a100-02")
+    view._last_sorted_nodes = [target]
+
+    class _FakeTable:
+        cursor_row = 0
+
+    monkeypatch.setattr(view, "query_one", lambda *_args, **_kw: _FakeTable())
+
+    pushed: list = []
+
+    class _FakeApp:
+        def push_screen(self, screen, *args, **kwargs):
+            pushed.append(screen)
+
+    fake_app = _FakeApp()
+    monkeypatch.setattr(NodesView, "app", property(lambda self: fake_app))
+
+    view.action_investigate_node()
+
+    assert len(pushed) == 1
+    screen = pushed[0]
+    assert isinstance(screen, NodeInvestigationScreen)
+    assert screen._node_name == "gpu-a100-02"
+
+
+def test_nodes_view_I_binding_no_op_when_table_empty(monkeypatch):
+    """When _last_sorted_nodes is empty, no modal is pushed."""
+    from sqtop.views.nodes import NodesView
+
+    view = NodesView()
+    view._last_sorted_nodes = []
+
+    class _FakeTable:
+        cursor_row = 0
+
+    monkeypatch.setattr(view, "query_one", lambda *_args, **_kw: _FakeTable())
+
+    pushed: list = []
+
+    class _FakeApp:
+        def push_screen(self, screen, *args, **kwargs):
+            pushed.append(screen)
+
+    fake_app = _FakeApp()
+    monkeypatch.setattr(NodesView, "app", property(lambda self: fake_app))
+
+    view.action_investigate_node()
+
+    assert pushed == []
+
+
+def test_nodes_view_has_uppercase_I_investigate_binding():
+    """The I (uppercase) binding maps to investigate_node and is shown in footer."""
+    from sqtop.views.nodes import NodesView
+    from textual.binding import Binding
+
+    investigate_bindings = [
+        b for b in NodesView.BINDINGS
+        if isinstance(b, Binding) and b.key == "I"
+    ]
+    assert len(investigate_bindings) == 1
+    assert investigate_bindings[0].action == "investigate_node"
+    assert investigate_bindings[0].show is True
+
+
+async def test_palette_offers_investigate_node_by_name():
+    """The system-command palette includes 'Investigate node by name'."""
+    app = _make_app(120, 30)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        labels = [cmd.title for cmd in pilot.app.get_system_commands(pilot.app.screen)]
+        assert "Investigate node by name" in labels
+
+
+def test_node_investigate_screen_responsive_clamp_xs():
+    """NodeInvestigationScreen exposes responsive_clamp and stores the tier marker."""
+    from sqtop.views.investigate import NodeInvestigationScreen
+
+    instance = object.__new__(NodeInvestigationScreen)
+    classes: set[str] = set()
+
+    def _add_class(*names):
+        classes.update(names)
+
+    instance.add_class = _add_class  # type: ignore[method-assign]
+    NodeInvestigationScreen.responsive_clamp(instance, "xs")
+    assert "clamp-xs" in classes
