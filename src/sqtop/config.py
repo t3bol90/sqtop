@@ -196,6 +196,27 @@ def _toml_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def set_config_path(path: str | Path | None) -> None:
+    """Override the config file path used by load/save/update.
+
+    Pass an explicit Path to redirect; pass None to restore the default
+    XDG location (~/.config/sqtop/config.toml).
+
+    The change applies to every subsequent call. Existing in-memory state
+    held by callers (e.g. SqtopApp.__init__'s cached values) is unaffected
+    until they call load() again — the "Reload config" palette command
+    is the documented way to re-apply state mid-session.
+    """
+    global _CONFIG_DIR, _CONFIG_FILE
+    if path is None:
+        _CONFIG_DIR = Path.home() / ".config" / "sqtop"
+        _CONFIG_FILE = _CONFIG_DIR / "config.toml"
+    else:
+        p = Path(path).expanduser().resolve()
+        _CONFIG_FILE = p
+        _CONFIG_DIR = p.parent
+
+
 def load() -> dict:
     """Return config dict, falling back to defaults on any error."""
     if not _CONFIG_FILE.exists():

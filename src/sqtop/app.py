@@ -438,6 +438,52 @@ class SqtopApp(App):
             self._action_investigate_node_by_name,
             discover=False,
         )
+        yield SystemCommand(
+            "Reload config",
+            "Re-read ~/.config/sqtop/config.toml and apply theme, expert mode, and confirmation settings",
+            self._action_reload_config,
+            discover=True,
+        )
+
+    def _action_reload_config(self) -> None:
+        """Re-read config from disk and apply settings that can change live.
+
+        Settings re-applied: theme, expert_mode, confirm_cancel_single,
+        confirm_bulk_actions. Other settings (refresh interval, column
+        visibility/order, attach behavior) take effect on next sqtop start
+        or when the user re-enters the affected view.
+        """
+        try:
+            cfg = config.load()
+        except Exception as exc:
+            self.notify(
+                f"Reload failed: {exc}",
+                title="Config",
+                severity="error",
+                timeout=8,
+            )
+            return
+
+        # Theme: re-apply via the public attribute. watch_theme will call
+        # config.save(), which is harmless because the value matches what's
+        # already on disk.
+        new_theme = cfg.get("theme", "dracula")
+        if new_theme != self.theme:
+            self.theme = new_theme
+
+        # Safety/expert flags: cached on App as plain attributes; views read
+        # via getattr(self.app, ...).
+        self.expert_mode = bool(cfg.get("ui", {}).get("expert_mode", False))
+        self.confirm_cancel_single = bool(cfg.get("safety", {}).get("confirm_cancel_single", True))
+        self.confirm_bulk_actions = bool(cfg.get("safety", {}).get("confirm_bulk_actions", True))
+
+        self.notify(
+            "Config reloaded — theme + safety flags applied. "
+            "Refresh interval and column changes require restart or re-entering the view.",
+            title="Config",
+            severity="information",
+            timeout=6,
+        )
 
     def _action_investigate_node_by_name(self) -> None:
         """Prompt for a node name, then open NodeInvestigationScreen."""
