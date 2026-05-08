@@ -270,3 +270,24 @@ def test_update_investigation_preserves_unknown_user_keys(temp_config):
     rewritten = cfg_file.read_text(encoding="utf-8")
     assert 'reasons_path = "/new/reasons.toml"' in rewritten
     assert 'my_unknown_inv_key = "preserved"' in rewritten
+
+
+# ── [investigation].max_related_jobs (SPEC §16.9 example) ─────────────────────
+
+
+def test_load_returns_investigation_max_related_jobs_default_20(temp_config):
+    """Fresh config: max_related_jobs defaults to 20 (matches SPEC §16.9)."""
+    cfg = config.load()
+    assert cfg["investigation"]["max_related_jobs"] == 20
+
+
+def test_update_persists_max_related_jobs(temp_config):
+    """update() persists max_related_jobs and the value round-trips on disk."""
+    config.update({"investigation": {"max_related_jobs": 50}})
+
+    cfg = config.load()
+    assert cfg["investigation"]["max_related_jobs"] == 50
+
+    raw = (temp_config / "config.toml").read_text(encoding="utf-8")
+    assert "[investigation]" in raw
+    assert "max_related_jobs = 50" in raw

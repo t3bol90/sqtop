@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from sqtop import slurm
+from sqtop import config, slurm
 from sqtop.investigation import (
     InvestigationAction,
     InvestigationError,
@@ -372,3 +372,109 @@ def test_investigate_node_never_suggests_admin_actions(
         assert verb not in text, (
             f"forbidden verb {verb!r} in actions for state={state!r}: {text}"
         )
+
+
+# ---------------------------------------------------------------------------
+# [investigation].max_related_jobs cap (SPEC §16.9 example)
+# ---------------------------------------------------------------------------
+
+
+def _many_job_lines(n: int, node: str = "node01") -> str:
+    """Build n synthetic squeue rows in the _SQUEUE_FMT shape (12 fields)."""
+    lines = []
+    for i in range(n):
+        lines.append(
+            f"{1000 + i}|train{i}|alice|RUNNING|gpu|1|1|0:00:30|1:00:00|None|{node}|normal"
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _setup_busy_node(
+    patch_scontrol_node, patch_run, patch_fetch_nodes, n_jobs: int = 30,
+):
+    """Common harness: MIXED node with n_jobs visible jobs."""
+    patch_scontrol_node(_scontrol_node_block(state="MIXED"))
+    patch_fetch_nodes([_make_node(
+        state="mixed",
+        cpus_total="8",
+        cpus_alloc="4",
+        gpu_total=2,
+        gpu_alloc=1,
+    )])
+    job_lines = _many_job_lines(n_jobs)
+
+    def router(cmd: str) -> str:
+        if "squeue" in cmd and "-w" in cmd:
+            return job_lines
+        return ""
+
+    patch_run(router)
+
+
+def test_investigate_node_caps_related_jobs_at_default_20(
+    temp_config, patch_scontrol_node, patch_run, patch_fetch_nodes,
+):
+    """Default cap is 20 (SPEC §16.9 example)."""
+    _setup_busy_node(patch_scontrol_node, patch_run, patch_fetch_nodes, n_jobs=30)
+    report = slurm.investigate_node("node01")
+    assert len(report.related_jobs) == 20
+
+
+def test_investigate_node_respects_custom_max_related_jobs(
+    temp_config, patch_scontrol_node, patch_run, patch_fetch_nodes,
+):
+    """User-configured cap overrides the default."""
+    config.update({"investigation": {"max_related_jobs": 5}})
+    _setup_busy_node(patch_scontrol_node, patch_run, patch_fetch_nodes, n_jobs=30)
+    report = slurm.investigate_node("node01")
+    assert len(report.related_jobs) == 5
+
+
+def test_investigate_node_zero_cap_disables_limit(
+    temp_config, patch_scontrol_node, patch_run, patch_fetch_nodes,
+):
+    """Cap = 0 means include all visible jobs (no cap)."""
+    config.update({"investigation": {"max_related_jobs": 0}})
+    _setup_busy_node(patch_scontrol_node, patch_run, patch_fetch_nodes, n_jobs=30)
+    report = slurm.investigate_node("node01")
+    assert len(report.related_jobs) == 30
+
+
+def test_investigate_node_negative_cap_disables_limit(
+    temp_config, patch_scontrol_node, patch_run, patch_fetch_nodes,
+):
+    """Negative cap also disables the limit."""
+    config.update({"investigation": {"max_related_jobs": -1}})
+    _setup_busy_node(patch_scontrol_node, patch_run, patch_fetch_nodes, n_jobs=30)
+    report = slurm.investigate_node("node01")
+    assert len(report.related_jobs) == 30
+
+
+def test_investigate_node_invalid_cap_falls_back_to_default(
+    temp_config, patch_scontrol_node, patch_run, patch_fetch_nodes,
+):
+    """Malformed config value (non-int) falls back to the default cap of 20."""
+    # Bypass the writer (which would reject/coerce) and write raw TOML directly.
+    cfg_file = temp_config / "config.toml"
+    cfg_file.write_text(
+        "[investigation]\nmax_related_jobs = \"bad\"\n",
+        encoding="utf-8",
+    )
+    _setup_busy_node(patch_scontrol_node, patch_run, patch_fetch_nodes, n_jobs=30)
+    report = slurm.investigate_node("node01")
+    assert len(report.related_jobs) == 20
+
+
+def test_investigate_node_cap_does_not_affect_evidence(
+    temp_config, patch_scontrol_node, patch_run, patch_fetch_nodes,
+):
+    """Cap trims related_jobs but leaves derived evidence (cpus_free etc.) intact."""
+    config.update({"investigation": {"max_related_jobs": 5}})
+    _setup_busy_node(patch_scontrol_node, patch_run, patch_fetch_nodes, n_jobs=30)
+    report = slurm.investigate_node("node01")
+    assert len(report.related_jobs) == 5
+    derived = {ev.id: ev.value for ev in report.evidence if ev.source == "derived"}
+    # cpus_total=8, cpus_alloc=4 -> 4 free / 8 total, regardless of cap.
+    assert derived.get("derived.cpus_free") == "4/8"
+    # gpu_total=2, gpu_alloc=1 -> 1 free / 2 total.
+    assert derived.get("derived.gpus_free") == "1/2"

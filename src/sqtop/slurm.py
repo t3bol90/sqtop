@@ -1311,6 +1311,18 @@ def investigate_node(node_name: str):
     for job in jobs_on_node:
         report.related_jobs.append(job)
 
+    # Cap related_jobs per [investigation].max_related_jobs (SPEC §16.9 example).
+    # 0 / negative disables the cap. Default 20. Defensive against malformed
+    # config values: anything non-coercible falls back to the documented default.
+    from . import config as _config
+    try:
+        cap_raw = _config.load().get("investigation", {}).get("max_related_jobs", 20)
+        cap = int(cap_raw)
+    except (TypeError, ValueError):
+        cap = 20
+    if cap > 0 and len(report.related_jobs) > cap:
+        report.related_jobs = report.related_jobs[:cap]
+
     if not jobs_on_node and state_token in _NODE_ACTIVE_STATES:
         report.explanations.append(InvestigationExplanation(
             title="No matching jobs visible",

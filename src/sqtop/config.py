@@ -68,6 +68,8 @@ theme: str — Textual theme name applied at startup.
   reasons_path: str — path to a TOML file extending pending-reason
     explanations (SPEC §20.3). Empty = built-in map only. Relative paths
     resolve against the config directory.
+  max_related_jobs: int — cap on related_jobs included in node investigation
+    reports (>0; <=0 disables the cap and includes all visible jobs).
 
 Writes are round-trip preserving: comments, key order, unknown sections, and
 unknown keys present in the on-disk file are retained when only specific keys
@@ -144,6 +146,7 @@ _DEFAULTS: dict = {
     },
     "investigation": {
         "reasons_path": "",
+        "max_related_jobs": 20,
     },
 }
 
