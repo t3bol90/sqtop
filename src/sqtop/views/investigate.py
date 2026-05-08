@@ -9,9 +9,24 @@ from textual.screen import ModalScreen
 from textual.widgets import Label, Static, TextArea
 
 from ..clipboard import app_copy
-from ..investigation import render_report
+from ..investigation import InvestigationError, render_report
 from ..responsive import Tier
 from ..slurm import investigate_job, investigate_node
+
+
+def _format_partial_message(kind: str, errors: list[InvestigationError]) -> str:
+    """Build the user-facing toast message for a partial investigation report.
+
+    ``kind`` is "job" or "node". The message names the count of failed
+    sources and the first error's category so the user can decide whether
+    to dig into the rendered Errors section.
+    """
+    count = len(errors)
+    first_cat = errors[0].category
+    return (
+        f"Partial {kind} investigation: {count} source(s) failed "
+        f"(first: {first_cat})"
+    )
 
 
 class JobInvestigationScreen(ModalScreen[None]):
@@ -91,10 +106,21 @@ class JobInvestigationScreen(ModalScreen[None]):
         report = investigate_job(self._job_id)
         text = render_report(report)
         self.app.call_from_thread(self._update_content, text)
+        if report.errors:
+            self.app.call_from_thread(self._notify_partial, list(report.errors))
 
     def _update_content(self, text: str) -> None:
         self._plain_text = text
         self.query_one("#investigate-content", TextArea).load_text(text)
+
+    def _notify_partial(self, errors: list[InvestigationError]) -> None:
+        """Surface a warning toast when the report has non-empty errors."""
+        self.app.notify(
+            _format_partial_message("job", errors),
+            title="Investigation",
+            severity="warning",
+            timeout=8,
+        )
 
     def action_copy_report(self) -> None:
         ta = self.query_one(TextArea)
@@ -199,10 +225,21 @@ class NodeInvestigationScreen(ModalScreen[None]):
         report = investigate_node(self._node_name)
         text = render_report(report)
         self.app.call_from_thread(self._update_content, text)
+        if report.errors:
+            self.app.call_from_thread(self._notify_partial, list(report.errors))
 
     def _update_content(self, text: str) -> None:
         self._plain_text = text
         self.query_one("#investigate-content", TextArea).load_text(text)
+
+    def _notify_partial(self, errors: list[InvestigationError]) -> None:
+        """Surface a warning toast when the report has non-empty errors."""
+        self.app.notify(
+            _format_partial_message("node", errors),
+            title="Investigation",
+            severity="warning",
+            timeout=8,
+        )
 
     def action_copy_report(self) -> None:
         ta = self.query_one(TextArea)

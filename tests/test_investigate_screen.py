@@ -204,6 +204,87 @@ async def test_investigate_screen_handles_partial_report(monkeypatch):
         assert "slurm_permission_denied" in text
 
 
+def _patch_notify(app):
+    """Replace ``app.notify`` with a list-recording stub.
+
+    Returns the captured-records list. The replacement signature mirrors
+    ``Textual.App.notify`` keyword args used by the screens.
+    """
+    captured: list[dict] = []
+
+    def fake_notify(message, *, title="", severity="information", timeout=None):
+        captured.append(
+            {
+                "message": message,
+                "title": title,
+                "severity": severity,
+                "timeout": timeout,
+            }
+        )
+
+    app.notify = fake_notify  # type: ignore[method-assign]
+    return captured
+
+
+async def test_job_investigation_notifies_on_partial_report(monkeypatch):
+    """When report.errors is non-empty, a warning toast fires after load."""
+    from sqtop.views import investigate as investigate_mod
+    from sqtop.views.investigate import JobInvestigationScreen
+
+    def _partial(jid: str) -> InvestigationReport:
+        report = _fake_report(jid)
+        report.errors.append(
+            InvestigationError(
+                source="sacct",
+                category="accounting_unavailable",
+                message="sacct unavailable",
+            )
+        )
+        return report
+
+    monkeypatch.setattr(investigate_mod, "investigate_job", _partial)
+
+    app = _make_app(120, 30)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        captured = _patch_notify(pilot.app)
+        await pilot.app.push_screen(JobInvestigationScreen("12345"))
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        # Absorb the trailing call_from_thread that fires _notify_partial.
+        await pilot.pause()
+
+        warnings = [c for c in captured if c["severity"] == "warning"]
+        assert warnings, f"expected a warning notification, got {captured!r}"
+        msg = warnings[0]["message"]
+        assert "accounting_unavailable" in msg
+        assert "1" in msg
+        assert "job" in msg
+        assert warnings[0]["title"] == "Investigation"
+
+
+async def test_job_investigation_does_not_notify_on_clean_report(monkeypatch):
+    """When report.errors is empty, no warning toast fires."""
+    from sqtop.views import investigate as investigate_mod
+    from sqtop.views.investigate import JobInvestigationScreen
+
+    monkeypatch.setattr(
+        investigate_mod, "investigate_job", lambda jid: _fake_report(jid)
+    )
+
+    app = _make_app(120, 30)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        captured = _patch_notify(pilot.app)
+        await pilot.app.push_screen(JobInvestigationScreen("12345"))
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.pause()
+
+        warnings = [c for c in captured if c["severity"] == "warning"]
+        assert warnings == []
+
+
 # ---------------------------------------------------------------------------
 # I-binding wiring on JobsView
 # ---------------------------------------------------------------------------
@@ -454,6 +535,65 @@ async def test_node_investigate_screen_handles_partial_report(monkeypatch):
         text = ta.text
         assert "Errors" in text
         assert "slurm_permission_denied" in text
+
+
+async def test_node_investigation_notifies_on_partial_report(monkeypatch):
+    """When the node report has non-empty errors, a warning toast fires."""
+    from sqtop.views import investigate as investigate_mod
+    from sqtop.views.investigate import NodeInvestigationScreen
+
+    def _partial(name: str) -> InvestigationReport:
+        report = _fake_node_report(name)
+        report.errors.append(
+            InvestigationError(
+                source="scontrol",
+                category="slurm_permission_denied",
+                message=f"scontrol show node {name} failed",
+                stderr="permission denied",
+            )
+        )
+        return report
+
+    monkeypatch.setattr(investigate_mod, "investigate_node", _partial)
+
+    app = _make_app(120, 30)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        captured = _patch_notify(pilot.app)
+        await pilot.app.push_screen(NodeInvestigationScreen("gpu-a100-02"))
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.pause()
+
+        warnings = [c for c in captured if c["severity"] == "warning"]
+        assert warnings, f"expected a warning notification, got {captured!r}"
+        msg = warnings[0]["message"]
+        assert "node" in msg
+        assert "slurm_permission_denied" in msg
+        assert "1" in msg
+        assert warnings[0]["title"] == "Investigation"
+
+
+async def test_node_investigation_does_not_notify_on_clean_report(monkeypatch):
+    """When the node report has no errors, no warning toast fires."""
+    from sqtop.views import investigate as investigate_mod
+    from sqtop.views.investigate import NodeInvestigationScreen
+
+    monkeypatch.setattr(
+        investigate_mod, "investigate_node", lambda name: _fake_node_report(name)
+    )
+
+    app = _make_app(120, 30)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        captured = _patch_notify(pilot.app)
+        await pilot.app.push_screen(NodeInvestigationScreen("gpu-a100-02"))
+        await pilot.app.workers.wait_for_complete()
+        await pilot.pause()
+        await pilot.pause()
+
+        warnings = [c for c in captured if c["severity"] == "warning"]
+        assert warnings == []
 
 
 def _make_node(name: str = "gpu-a100-02"):
