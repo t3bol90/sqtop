@@ -133,8 +133,14 @@ You can cap jobs-table text width (content longer than cap is truncated with `..
 
 ```toml
 theme = "dracula"
-interval = 2.0
 
+# Auto-refresh seconds per view.
+[interval]
+jobs = 2.0
+nodes = 2.0
+partitions = 5.0
+
+# Jobs view column width caps.
 [jobs]
 name_max = 24
 user_max = 12
@@ -142,25 +148,30 @@ partition_max = 14
 nodelist_reason_max = 40
 qos_max = 12
 
+# Attach-via-srun behavior.
 [attach]
 enabled = true
 default_command = "$SHELL -l"
 extra_args = ""
 
+# UI visual behavior and confirmation toggles.
 [ui]
 expert_mode = false
 show_palette_hints = true
 
+# Confirmation prompts for destructive actions.
 [safety]
 confirm_cancel_single = true
 confirm_bulk_actions = true
 
+# Health view diagnostics and warning thresholds.
 [health]
 enabled = true
 history_size = 100
 warn_pending_ratio = 0.7
 warn_down_nodes = 1
 
+# Default SSH host for remote mode.
 [remote]
 host = "my-cluster"
 ```
@@ -172,6 +183,12 @@ Attach behavior:
 - sqtop suspends while the interactive `srun --pty` session is active.
 - Exit the shell to return to sqtop.
 
+## Investigation Mode
+
+Press `I` (capital) on either the Jobs or Nodes view to open an evidence-based investigation report. The report combines raw Slurm evidence (`squeue` / `sinfo` / `scontrol` output), derived observations with confidence levels, related jobs and nodes, and safe user-level next actions. Investigation Mode is for understanding "why is my job stuck" or "what's happening with this node" — it does not perform admin actions.
+
+From any view, `Ctrl+P` (or `S`) opens the command palette; "Investigate job by ID" and "Investigate node by name" prompt for an identifier and open the report. Reports are copyable as plain text via `y` or `Ctrl+C` inside the modal.
+
 ## Keybindings
 
 ### Global
@@ -181,6 +198,8 @@ Attach behavior:
 | `1` | Jobs tab |
 | `2` | Nodes tab |
 | `3` | Partitions tab |
+| `4` | History tab |
+| `5` | Health tab |
 | `Ctrl+P` / `S` | Command palette (refresh interval, default sort, expert mode, column visibility, …) |
 | `r` | Refresh all tabs |
 | `Shift+P` | Save screenshot to `~/.cache/sqtop/screenshots` |
@@ -210,6 +229,8 @@ Attach behavior:
 | `Shift+Y` | Copy current row |
 | `w` | Toggle watch on selected job |
 | `Shift+D` | View dependency tree |
+| `i` | Job info (curated quick view) |
+| `I` | Investigate (evidence-based job report) |
 
 ### Nodes tab
 
@@ -219,6 +240,7 @@ Attach behavior:
 | `s` | Sort by state |
 | `p` | Sort by CPU% |
 | `m` | Sort by free memory |
+| `I` | Investigate (evidence-based node report) |
 
 ### Partitions tab
 
@@ -226,6 +248,10 @@ Attach behavior:
 |---|---|
 | `s` | Sort by partition |
 | `n` | Sort by nodes |
+
+### Health tab
+
+Press `5` to switch to the Health tab. It shows per-command latency and error categories from recent Slurm calls (timeouts, non-zero exit, permission failures). Use it to diagnose slow `squeue` / `sinfo` calls or recurring auth errors — Health issues no Slurm commands of its own.
 
 ## Contributing
 
