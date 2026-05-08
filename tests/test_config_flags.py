@@ -238,3 +238,185 @@ async def test_reload_config_handles_load_failure_gracefully(monkeypatch, temp_c
         assert errors, f"expected an error notification, got {captured!r}"
         assert "boom" in errors[0]["message"]
         assert errors[0]["title"] == "Config"
+
+
+# ── Reload config: [interval] re-thread (PR 10) ──────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_reload_config_applies_new_intervals_to_all_views(temp_config):
+    """_action_reload_config() must re-thread [interval] to all views."""
+    cfg_file = temp_config / "config.toml"
+    cfg_file.write_text(
+        'theme = "dracula"\n'
+        "\n"
+        "[interval]\n"
+        "jobs = 2.0\n"
+        "nodes = 2.0\n"
+        "partitions = 5.0\n",
+        encoding="utf-8",
+    )
+
+    app = _make_app(120, 30)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        # Sanity: pre-reload intervals match what we wrote.
+        assert pilot.app._intervals == {"jobs": 2.0, "nodes": 2.0, "partitions": 5.0}
+
+        config.update({"interval": {"jobs": 1.5, "nodes": 4.0, "partitions": 8.0}})
+        await pilot.pause()
+
+        pilot.app._action_reload_config()
+        await pilot.pause()
+
+        assert pilot.app._intervals == {"jobs": 1.5, "nodes": 4.0, "partitions": 8.0}
+        # App-wide default tracks the Jobs interval.
+        assert pilot.app.interval == 1.5
+
+        # Per-view private interval cache (BaseDataTableView._interval) must
+        # also reflect the new values.
+        from sqtop.views.jobs import JobsView
+        from sqtop.views.nodes import NodesView
+        from sqtop.views.partitions import PartitionsView
+
+        assert pilot.app.query_one(JobsView)._interval == 1.5
+        assert pilot.app.query_one(NodesView)._interval == 4.0
+        assert pilot.app.query_one(PartitionsView)._interval == 8.0
+
+
+@pytest.mark.asyncio
+async def test_reload_config_skips_interval_apply_when_unchanged(monkeypatch, temp_config):
+    """When the on-disk intervals match the cache, set_interval_rate must NOT be called."""
+    cfg_file = temp_config / "config.toml"
+    cfg_file.write_text(
+        'theme = "dracula"\n'
+        "\n"
+        "[interval]\n"
+        "jobs = 2.0\n"
+        "nodes = 2.0\n"
+        "partitions = 5.0\n",
+        encoding="utf-8",
+    )
+
+    app = _make_app(120, 30)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+
+        # Re-write the on-disk file post-mount: watch_theme fires during
+        # mount and broadcasts a single interval via config.save(), which
+        # overwrites partitions=5.0. We restore the intended on-disk state
+        # AND pin the App-level cache to match before recording calls.
+        cfg_file.write_text(
+            'theme = "dracula"\n'
+            "\n"
+            "[interval]\n"
+            "jobs = 2.0\n"
+            "nodes = 2.0\n"
+            "partitions = 5.0\n",
+            encoding="utf-8",
+        )
+        pilot.app._intervals = {"jobs": 2.0, "nodes": 2.0, "partitions": 5.0}
+
+        from sqtop.views.base import BaseDataTableView
+
+        calls: list[float] = []
+        original = BaseDataTableView.set_interval_rate
+
+        def recording(self, interval: float) -> None:
+            calls.append(interval)
+            return original(self, interval)
+
+        monkeypatch.setattr(BaseDataTableView, "set_interval_rate", recording)
+
+        # On-disk intervals match the cache → reload must be a no-op for intervals.
+        pilot.app._action_reload_config()
+        await pilot.pause()
+
+        assert calls == [], f"expected no set_interval_rate calls, got {calls!r}"
+
+
+@pytest.mark.asyncio
+async def test_reload_config_handles_missing_interval_section_gracefully(temp_config):
+    """A config with no [interval] section must fall back to documented defaults."""
+    cfg_file = temp_config / "config.toml"
+    cfg_file.write_text('theme = "dracula"\n', encoding="utf-8")
+
+    app = _make_app(120, 30)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+
+        # Re-write the on-disk file post-mount to remove the [interval]
+        # section that watch_theme injected during startup. This is the
+        # condition we actually want to test: a hand-edited config with no
+        # [interval] table at all.
+        cfg_file.write_text('theme = "dracula"\n', encoding="utf-8")
+
+        # Must not raise.
+        pilot.app._action_reload_config()
+        await pilot.pause()
+
+        # Documented defaults: jobs=2.0, nodes=2.0, partitions=5.0.
+        assert pilot.app._intervals == {"jobs": 2.0, "nodes": 2.0, "partitions": 5.0}
+
+
+@pytest.mark.asyncio
+async def test_reload_config_notify_mentions_intervals(temp_config):
+    """The reload notify message must mention 'interval' when intervals changed."""
+    cfg_file = temp_config / "config.toml"
+    cfg_file.write_text(
+        'theme = "dracula"\n'
+        "\n"
+        "[interval]\n"
+        "jobs = 2.0\n"
+        "nodes = 2.0\n"
+        "partitions = 5.0\n",
+        encoding="utf-8",
+    )
+
+    app = _make_app(120, 30)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+        captured = _patch_notify(pilot.app)
+
+        config.update({"interval": {"jobs": 1.5, "nodes": 4.0, "partitions": 8.0}})
+        await pilot.pause()
+
+        pilot.app._action_reload_config()
+        await pilot.pause()
+
+        assert any("interval" in c["message"].lower() for c in captured), (
+            f"expected at least one notify with 'interval', got {captured!r}"
+        )
+
+
+@pytest.mark.asyncio
+async def test_reload_config_with_partial_interval_dict_uses_defaults(temp_config):
+    """Partial [interval] table → missing keys fall back to documented defaults."""
+    cfg_file = temp_config / "config.toml"
+    cfg_file.write_text(
+        'theme = "dracula"\n'
+        "\n"
+        "[interval]\n"
+        "jobs = 1.0\n",
+        encoding="utf-8",
+    )
+
+    app = _make_app(120, 30)
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause()
+
+        # watch_theme fires during mount and broadcasts the App's interval
+        # back to disk via config.save(); rewrite the partial-section state
+        # to test the actual scenario we care about.
+        cfg_file.write_text(
+            'theme = "dracula"\n'
+            "\n"
+            "[interval]\n"
+            "jobs = 1.0\n",
+            encoding="utf-8",
+        )
+
+        pilot.app._action_reload_config()
+        await pilot.pause()
+
+        assert pilot.app._intervals == {"jobs": 1.0, "nodes": 2.0, "partitions": 5.0}

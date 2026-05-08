@@ -448,10 +448,10 @@ class SqtopApp(App):
     def _action_reload_config(self) -> None:
         """Re-read config from disk and apply settings that can change live.
 
-        Settings re-applied: theme, expert_mode, confirm_cancel_single,
-        confirm_bulk_actions. Other settings (refresh interval, column
-        visibility/order, attach behavior) take effect on next sqtop start
-        or when the user re-enters the affected view.
+        Settings re-applied: theme, [interval] (per-view refresh cadence),
+        expert_mode, confirm_cancel_single, confirm_bulk_actions. Other
+        settings (column visibility/order, attach behavior) take effect on
+        next sqtop start or when the user re-enters the affected view.
         """
         try:
             cfg = config.load()
@@ -468,8 +468,23 @@ class SqtopApp(App):
         # config.save(), which is harmless because the value matches what's
         # already on disk.
         new_theme = cfg.get("theme", "dracula")
-        if new_theme != self.theme:
+        applied_theme = new_theme != self.theme
+        if applied_theme:
             self.theme = new_theme
+
+        # [interval] table: per-view refresh cadence. Re-thread to every
+        # mounted view via the existing set_interval_rate() plumbing. Skip
+        # the apply when nothing changed so we don't needlessly restart
+        # timers (idempotent reload).
+        intervals = cfg.get("interval", {})
+        new_intervals = {
+            "jobs": float(intervals.get("jobs", 2.0)),
+            "nodes": float(intervals.get("nodes", 2.0)),
+            "partitions": float(intervals.get("partitions", 5.0)),
+        }
+        applied_intervals = new_intervals != self._intervals
+        if applied_intervals:
+            self._apply_intervals(new_intervals)
 
         # Safety/expert flags: cached on App as plain attributes; views read
         # via getattr(self.app, ...).
@@ -477,13 +492,48 @@ class SqtopApp(App):
         self.confirm_cancel_single = bool(cfg.get("safety", {}).get("confirm_cancel_single", True))
         self.confirm_bulk_actions = bool(cfg.get("safety", {}).get("confirm_bulk_actions", True))
 
+        parts: list[str] = []
+        if applied_theme:
+            parts.append("theme")
+        if applied_intervals:
+            parts.append("intervals")
+        parts.append("safety flags")
+        summary = " + ".join(parts)
         self.notify(
-            "Config reloaded — theme + safety flags applied. "
-            "Refresh interval and column changes require restart or re-entering the view.",
+            f"Config reloaded — applied: {summary}. "
+            "Column visibility and order require restart or re-entering the view.",
             title="Config",
             severity="information",
             timeout=6,
         )
+
+    def _apply_intervals(self, intervals: dict[str, float]) -> None:
+        """Apply per-view refresh intervals from a [interval] dict.
+
+        Updates the App-level cache and re-threads each live view's timer via
+        the existing BaseDataTableView.set_interval_rate() plumbing. Each
+        query_one is wrapped in try/except because views may not be mounted
+        yet (e.g. early in app lifecycle); this mirrors the defensive pattern
+        used by _apply_tier_to_tabs().
+        """
+        self._intervals = dict(intervals)
+        # The Jobs interval is the App-wide default (matches __init__'s convention).
+        self.interval = self._intervals["jobs"]
+        try:
+            jobs_view = self.query_one(JobsView)
+            jobs_view.set_interval_rate(self._intervals["jobs"])
+        except Exception:
+            pass
+        try:
+            nodes_view = self.query_one(NodesView)
+            nodes_view.set_interval_rate(self._intervals["nodes"])
+        except Exception:
+            pass
+        try:
+            partitions_view = self.query_one(PartitionsView)
+            partitions_view.set_interval_rate(self._intervals["partitions"])
+        except Exception:
+            pass
 
     def _action_investigate_node_by_name(self) -> None:
         """Prompt for a node name, then open NodeInvestigationScreen."""
