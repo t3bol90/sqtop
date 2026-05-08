@@ -17,6 +17,7 @@ class CommandStat:
     ok: bool
     latency_ms: int
     stderr: str = ""
+    error_category: str | None = None
 
 
 @dataclass
@@ -27,11 +28,81 @@ class ActionResult:
     message: str = ""
 
 
+# Normalized error categories that classify_error() may return. SPEC §10.1
+# enumerates additional categories (clipboard_unavailable, accounting_unavailable,
+# etc.) that belong to other layers and are intentionally out of scope here.
+ERROR_CATEGORIES = frozenset({
+    "slurm_command_not_found",
+    "slurm_command_timeout",
+    "slurm_command_failed",
+    "slurm_permission_denied",
+    "slurm_field_unavailable",
+    "ssh_connection_failed",
+    "ssh_auth_failed",
+    "ssh_command_timeout",
+    "job_not_found",
+    "node_not_found",
+})
+
+
+def classify_error(returncode: int | None, stderr: str) -> str | None:
+    """Map a (returncode, stderr) pair to a normalized error category.
+
+    Pure function: no subprocess, no SSH, no I/O. See SPEC §10.1.
+
+    Returns:
+        - None on success (returncode == 0).
+        - A category from ERROR_CATEGORIES otherwise.
+    """
+    if returncode == 0:
+        return None
+
+    text = (stderr or "").lower()
+
+    # Exception path: _run_result() collapses TimeoutExpired/FileNotFoundError/
+    # OSError into returncode=None with a distinguishing stderr substring.
+    if returncode is None:
+        if "timeout" in text:
+            return "slurm_command_timeout"
+        if "not found" in text:
+            return "slurm_command_not_found"
+        return "slurm_command_failed"
+
+    # Non-zero returncode: inspect stderr in priority order. Match SSH publickey
+    # auth failure BEFORE the generic "permission denied" check so it is
+    # disambiguated correctly.
+    if "publickey" in text or "authentication failed" in text:
+        return "ssh_auth_failed"
+    if "permission denied" in text or "unauthorized" in text or "not allowed" in text:
+        return "slurm_permission_denied"
+    if "connection refused" in text or "could not resolve hostname" in text or "connection closed" in text:
+        return "ssh_connection_failed"
+    if "timeout" in text:
+        return "slurm_command_timeout"
+    if "invalid job id" in text or "job not found" in text or "unknown job" in text:
+        return "job_not_found"
+    if "invalid node" in text or "node not found" in text or "unknown node" in text:
+        return "node_not_found"
+    return "slurm_command_failed"
+
+
 _COMMAND_HISTORY: deque[CommandStat] = deque(maxlen=300)
 
 
-def _record_command(command: str, ok: bool, latency_ms: int, stderr: str = "") -> None:
-    _COMMAND_HISTORY.append(CommandStat(command=command, ok=ok, latency_ms=latency_ms, stderr=stderr))
+def _record_command(
+    command: str,
+    ok: bool,
+    latency_ms: int,
+    stderr: str = "",
+    error_category: str | None = None,
+) -> None:
+    _COMMAND_HISTORY.append(CommandStat(
+        command=command,
+        ok=ok,
+        latency_ms=latency_ms,
+        stderr=stderr,
+        error_category=error_category,
+    ))
 
 
 def _run_result(cmd: str) -> tuple[str, bool, str]:
@@ -52,21 +123,45 @@ def _run_result(cmd: str) -> tuple[str, bool, str]:
             timeout=10,
         )
         ok = result.returncode == 0
+        stderr_text = (result.stderr or "").strip()
         _record_command(
             cmd,
             ok=ok,
             latency_ms=int((monotonic() - start) * 1000),
-            stderr=(result.stderr or "").strip(),
+            stderr=stderr_text,
+            error_category=classify_error(result.returncode, stderr_text),
         )
-        return result.stdout, ok, (result.stderr or "").strip()
-    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return result.stdout, ok, stderr_text
+    except subprocess.TimeoutExpired:
+        stderr_text = "timeout"
         _record_command(
             cmd,
             ok=False,
             latency_ms=int((monotonic() - start) * 1000),
-            stderr="timeout or command not found",
+            stderr=stderr_text,
+            error_category=classify_error(None, stderr_text),
         )
-        return "", False, "timeout or command not found"
+        return "", False, stderr_text
+    except FileNotFoundError:
+        stderr_text = "command not found"
+        _record_command(
+            cmd,
+            ok=False,
+            latency_ms=int((monotonic() - start) * 1000),
+            stderr=stderr_text,
+            error_category=classify_error(None, stderr_text),
+        )
+        return "", False, stderr_text
+    except OSError as exc:
+        stderr_text = f"OS error: {exc}"
+        _record_command(
+            cmd,
+            ok=False,
+            latency_ms=int((monotonic() - start) * 1000),
+            stderr=stderr_text,
+            error_category=classify_error(None, stderr_text),
+        )
+        return "", False, stderr_text
 
 
 def _run(cmd: str) -> str:

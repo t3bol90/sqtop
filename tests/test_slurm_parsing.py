@@ -217,30 +217,41 @@ def test_tail_log_file_empty_output(mock_run):
 # ── _run_result exception handling ───────────────────────────────────────────
 
 def test_run_result_timeout(monkeypatch):
-    """TimeoutExpired → returns empty string, ok=False."""
+    """TimeoutExpired → returns empty string, ok=False, category slurm_command_timeout."""
     def fake_run(*args, **kwargs):
         raise subprocess.TimeoutExpired(cmd="squeue", timeout=10)
     monkeypatch.setattr(subprocess, "run", fake_run)
     out, ok, stderr = slurm._run_result("squeue --noheader")
     assert out == ""
     assert ok is False
+    assert "timeout" in stderr.lower()
+    assert slurm._COMMAND_HISTORY[-1].error_category == "slurm_command_timeout"
 
 
 def test_run_result_file_not_found(monkeypatch):
-    """FileNotFoundError → returns empty string, ok=False."""
+    """FileNotFoundError → returns empty string, ok=False, category slurm_command_not_found."""
     def fake_run(*args, **kwargs):
         raise FileNotFoundError("squeue not found")
     monkeypatch.setattr(subprocess, "run", fake_run)
     out, ok, stderr = slurm._run_result("squeue --noheader")
     assert out == ""
     assert ok is False
+    assert "not found" in stderr.lower()
+    assert slurm._COMMAND_HISTORY[-1].error_category == "slurm_command_not_found"
 
 
 def test_run_result_oserror(monkeypatch):
-    """OSError → returns empty string, ok=False (regression test for bug fix)."""
+    """OSError → returns empty string, ok=False; stderr carries the OSError message.
+
+    The OSError message is intentionally unrelated to known categorization
+    keywords ("publickey", "permission denied", "timeout", ...) so the category
+    falls back to slurm_command_failed and the test stays stable.
+    """
     def fake_run(*args, **kwargs):
-        raise OSError("permission denied")
+        raise OSError("too many open files")
     monkeypatch.setattr(subprocess, "run", fake_run)
     out, ok, stderr = slurm._run_result("squeue --noheader")
     assert out == ""
     assert ok is False
+    assert "too many open files" in stderr
+    assert slurm._COMMAND_HISTORY[-1].error_category == "slurm_command_failed"
