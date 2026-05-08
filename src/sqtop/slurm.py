@@ -261,9 +261,13 @@ def fetch_jobs_on_node(node_name: str) -> list[Job]:
 # ---------------------------------------------------------------------------
 
 def _parse_gpu_count(gres_str: str) -> int:
-    """Extract GPU count from strings like 'gpu:4', 'gpu:a100:4', 'gpu:a100:4(IDX:0,1)'."""
-    m = re.search(r'\bgpu:(?:[^:,()\s]+:)?(\d+)', gres_str)
-    return int(m.group(1)) if m else 0
+    """Extract total GPU count from a GRES string.
+
+    Sums across multiple gpu: groups, e.g. "gpu:a100:4,gpu:b100:2" -> 6.
+    Single-group strings ("gpu:4", "gpu:a100:4", "gpu:a100:4(IDX:...)") are
+    unchanged. Empty / non-GPU / "(null)" inputs return 0.
+    """
+    return sum(int(n) for n in re.findall(r'\bgpu:(?:[^:,()\s]+:)?(\d+)', gres_str))
 
 
 @dataclass

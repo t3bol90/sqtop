@@ -64,9 +64,27 @@ def test_fetch_jobs_mixed_lines(mock_run):
     ("",                        0),
     ("cpu:8",                   0),
     ("(null)",                  0),
+    # Multi-type GRES (heterogeneous nodes): all gpu: groups must be summed.
+    pytest.param("gpu:a100:4,gpu:b100:2",                       6, id="multi-type-comma"),
+    pytest.param("gpu:a100:4 gpu:b100:2",                       6, id="multi-type-space"),
+    pytest.param("gpu:a100:4,gpu:b100:2,gpu:l4:1",              7, id="multi-type-three"),
+    pytest.param("gpu:a100:4(IDX:0,1,2,3),gpu:b100:2(IDX:0,1)", 6, id="multi-type-with-idx"),
+    pytest.param("gpu:4,gpu:2",                                 6, id="multi-type-no-typenames"),
+    pytest.param("cpu:16,gpu:a100:8",                           8, id="gpu-after-non-gpu"),
+    pytest.param("gpu:a100:0,gpu:b100:2",                       2, id="zero-in-one-group"),
 ])
 def test_parse_gpu_count(gres, expected):
     assert slurm._parse_gpu_count(gres) == expected
+
+
+def test_parse_gpu_count_single_type_unchanged():
+    """The pre-fix behavior must hold for every single-type case."""
+    assert slurm._parse_gpu_count("gpu:4") == 4
+    assert slurm._parse_gpu_count("gpu:a100:4") == 4
+    assert slurm._parse_gpu_count("gpu:a100:4(IDX:0,1,2,3)") == 4
+    assert slurm._parse_gpu_count("") == 0
+    assert slurm._parse_gpu_count("cpu:8") == 0
+    assert slurm._parse_gpu_count("(null)") == 0
 
 
 # ── _fetch_gpus_alloc ────────────────────────────────────────────────────────
