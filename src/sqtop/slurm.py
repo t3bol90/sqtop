@@ -1071,6 +1071,283 @@ def investigate_job(job_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Node investigation (SPEC sec. 8.5 / 9.3)
+# ---------------------------------------------------------------------------
+
+# Node-state token classes used to gate which "no visible jobs" explanation
+# and which suggested actions appear. Lookup is on the bare uppercase token
+# returned by ``_normalize_node_state_token`` so decoration suffixes such as
+# '*', '-', '+' do not affect membership.
+_NODE_ACTIVE_STATES = frozenset({"ALLOCATED", "MIXED"})
+_NODE_UNAVAILABLE_STATES = frozenset({"DOWN", "DRAIN", "DRAINED"})
+
+
+def _normalize_node_state_token(state: str) -> str:
+    """Strip Slurm decoration suffixes; uppercase the bare token.
+
+    Mirrors investigation._normalize_node_state but lives here so the
+    Slurm data layer can classify state without importing from the
+    domain module at call time.
+    """
+    suffixes = "*-+~#@!%$"
+    s = (state or "").strip()
+    while s and s[-1] in suffixes:
+        s = s[:-1]
+    return s.upper()
+
+
+def _safe_int(value: str | None) -> int | None:
+    """Parse a numeric Slurm field; return None on any failure."""
+    if value is None:
+        return None
+    s = value.strip()
+    if not s or s == "?":
+        return None
+    try:
+        return int(s)
+    except ValueError:
+        return None
+
+
+def investigate_node(node_name: str):
+    """Build an InvestigationReport for a single node.
+
+    SPEC sec. 8.5 / 9.3. Tolerant of partial failure: scontrol
+    unavailable, node missing from the live sinfo snapshot, or
+    fetch_jobs_on_node returning empty must NOT raise. A report with
+    errors is always preferable to no report.
+    """
+    # Local import: investigation imports Job/Node from slurm, so the
+    # dependency stays one-way at module load by deferring here.
+    from .investigation import (
+        InvestigationAction,
+        InvestigationError,
+        InvestigationEvidence,
+        InvestigationExplanation,
+        InvestigationItem,
+        InvestigationReport,
+        InvestigationTarget,
+        explain_node_state,
+    )
+
+    target = InvestigationTarget(kind="node", identifier=node_name, source="typed")
+    report = InvestigationReport(target=target, generated_at=datetime.now())
+
+    # ---- scontrol show node ----------------------------------------------
+    scontrol_out, scontrol_ok, scontrol_err = _run_result(
+        f"scontrol show node {shlex.quote(node_name)}"
+    )
+    detail: dict[str, str] = {}
+    if scontrol_ok:
+        for token in scontrol_out.split():
+            if "=" in token:
+                k, _, v = token.partition("=")
+                detail[k] = v
+        report.raw_sections["scontrol show node"] = "available"
+    else:
+        report.raw_sections["scontrol show node"] = "unavailable"
+        report.errors.append(InvestigationError(
+            source="scontrol",
+            category=classify_error(1, scontrol_err) or "slurm_command_failed",
+            message=f"scontrol show node {node_name} failed",
+            stderr=scontrol_err or None,
+        ))
+
+    # ---- live sinfo snapshot ---------------------------------------------
+    # Cache once; SPEC requires we never call fetch_nodes() inside a loop.
+    live_nodes = fetch_nodes()
+    live: Node | None = next((n for n in live_nodes if n.name == node_name), None)
+    if live is None:
+        report.errors.append(InvestigationError(
+            source="sinfo",
+            category="node_not_found",
+            message="Node not in current sinfo snapshot",
+        ))
+
+    # ---- determine state and reason --------------------------------------
+    state_raw = live.state if live is not None else detail.get("State", "")
+    state_token = _normalize_node_state_token(state_raw)
+    partition = live.partition if live is not None else detail.get("Partitions", "")
+    cpus_total_str = live.cpus_total if live is not None else detail.get("CPUTot", "")
+    cpus_alloc_str = live.cpus_alloc if live is not None else detail.get("CPUAlloc", "")
+    memory_total = live.memory_total if live is not None else detail.get("RealMemory", "")
+    memory_free = live.memory_free if live is not None else detail.get("FreeMem", "")
+    load = live.load if live is not None else detail.get("CPULoad", "")
+    gpu_total = live.gpu_total if live is not None else 0
+    gpu_alloc = live.gpu_alloc if live is not None else 0
+    gres = detail.get("Gres", "")
+    reason_raw = detail.get("Reason", "")
+
+    # ---- summary items ----------------------------------------------------
+    report.summary.append(InvestigationItem(label="State", value=_display(state_raw)))
+    report.summary.append(InvestigationItem(label="Partition", value=_display(partition)))
+    report.summary.append(InvestigationItem(
+        label="CPUs allocated/total",
+        value=_display(f"{cpus_alloc_str}/{cpus_total_str}")
+              if (cpus_alloc_str or cpus_total_str) else "(unavailable)",
+    ))
+    # SPEC sec. 6.2: missing GPU data MUST NOT imply zero GPUs. Only emit
+    # the GPU summary when Slurm actually reported a positive total.
+    if gpu_total > 0:
+        report.summary.append(InvestigationItem(
+            label="GPUs allocated/total",
+            value=f"{gpu_alloc}/{gpu_total}",
+        ))
+    report.summary.append(InvestigationItem(
+        label="Memory free/total",
+        value=_display(f"{memory_free}/{memory_total}")
+              if (memory_free or memory_total) else "(unavailable)",
+    ))
+    report.summary.append(InvestigationItem(label="Load", value=_display(load)))
+    if _present(gres):
+        report.summary.append(InvestigationItem(label="GRES", value=_display(gres)))
+    if _present(reason_raw):
+        report.summary.append(InvestigationItem(label="Reason", value=_display(reason_raw)))
+
+    # ---- evidence ---------------------------------------------------------
+    if live is not None:
+        report.evidence.append(InvestigationEvidence(
+            id="sinfo.state", label="State", value=live.state,
+            source="sinfo", confidence="high",
+        ))
+        report.evidence.append(InvestigationEvidence(
+            id="sinfo.cpus", label="CPUs allocated/total",
+            value=f"{live.cpus_alloc}/{live.cpus_total}",
+            source="sinfo", confidence="high",
+        ))
+        if live.gpu_total > 0:
+            report.evidence.append(InvestigationEvidence(
+                id="sinfo.gpus", label="GPUs allocated/total",
+                value=f"{live.gpu_alloc}/{live.gpu_total}",
+                source="sinfo", confidence="high",
+            ))
+        # Memory accounting can lag the kernel by minutes; mark as medium
+        # so the renderer surfaces the [medium] tag for derived consumers.
+        report.evidence.append(InvestigationEvidence(
+            id="sinfo.memory_free", label="Memory free",
+            value=live.memory_free,
+            source="sinfo", confidence="medium",
+        ))
+
+    if scontrol_ok:
+        if _present(detail.get("Partitions", "")):
+            report.evidence.append(InvestigationEvidence(
+                id="scontrol.partitions", label="Partitions",
+                value=detail["Partitions"],
+                source="scontrol", confidence="high",
+            ))
+        if _present(detail.get("Gres", "")):
+            report.evidence.append(InvestigationEvidence(
+                id="scontrol.gres", label="GRES",
+                value=detail["Gres"],
+                source="scontrol", confidence="high",
+            ))
+        if _present(detail.get("Features", "")) or _present(detail.get("AvailableFeatures", "")):
+            feats = detail.get("Features") or detail.get("AvailableFeatures") or ""
+            report.evidence.append(InvestigationEvidence(
+                id="scontrol.features", label="Features",
+                value=feats,
+                source="scontrol", confidence="high",
+            ))
+        if _present(reason_raw):
+            report.evidence.append(InvestigationEvidence(
+                id="scontrol.reason", label="Reason",
+                value=reason_raw,
+                source="scontrol", confidence="high",
+            ))
+
+    # ---- state explanation -----------------------------------------------
+    explanation = explain_node_state(state_raw or "")
+    report.explanations.append(InvestigationExplanation(
+        title=explanation.title,
+        detail=explanation.detail,
+        confidence=explanation.confidence,
+        evidence_refs=("sinfo.state",),
+    ))
+
+    # ---- jobs currently using this node ----------------------------------
+    try:
+        jobs_on_node = fetch_jobs_on_node(node_name)
+    except Exception:
+        jobs_on_node = []
+    for job in jobs_on_node:
+        report.related_jobs.append(job)
+
+    if not jobs_on_node and state_token in _NODE_ACTIVE_STATES:
+        report.explanations.append(InvestigationExplanation(
+            title="No matching jobs visible",
+            detail=(
+                "No matching jobs are visible to sqtop. The node may still "
+                "be unavailable due to reservations, drain state, hidden "
+                "jobs, or cluster policy."
+            ),
+            confidence="low",
+            evidence_refs=("sinfo.state",),
+        ))
+
+    # ---- derived free-resource estimates (SPEC sec. 8.5.3) ---------------
+    # Marked source="derived" so render_report() tags them with the
+    # confidence label, distinguishing them from raw Slurm-reported
+    # fields. Confidence is "medium" because the derivation is
+    # arithmetic on values that may themselves lag (memory) or be
+    # approximate (CPU alloc as the live snapshot drifts).
+    cpus_total_int = _safe_int(cpus_total_str)
+    cpus_alloc_int = _safe_int(cpus_alloc_str)
+    if cpus_total_int is not None and cpus_alloc_int is not None:
+        free_cpus = max(0, cpus_total_int - cpus_alloc_int)
+        report.evidence.append(InvestigationEvidence(
+            id="derived.cpus_free", label="CPUs free",
+            value=f"{free_cpus}/{cpus_total_int}",
+            source="derived", confidence="medium",
+        ))
+    if gpu_total > 0:
+        free_gpus = max(0, gpu_total - gpu_alloc)
+        report.evidence.append(InvestigationEvidence(
+            id="derived.gpus_free", label="GPUs free",
+            value=f"{free_gpus}/{gpu_total}",
+            source="derived", confidence="medium",
+        ))
+    if _present(memory_free):
+        report.evidence.append(InvestigationEvidence(
+            id="derived.memory_free", label="Memory free",
+            value=memory_free,
+            source="derived", confidence="medium",
+        ))
+
+    # ---- suggested actions (SPEC sec. 8.5, safe-for-user only) -----------
+    # ALL actions here MUST be safe_for_user=True. Admin verbs (drain,
+    # resume, modify partition, set qos, scontrol update, scontrol reboot,
+    # sudo) are intentionally absent — these belong to admin tooling, not
+    # the user-facing investigation report.
+    report.suggested_actions.append(InvestigationAction(
+        label="Inspect raw scontrol detail",
+        detail="Open the full scontrol show node output.",
+        safe_for_user=True,
+    ))
+    report.suggested_actions.append(InvestigationAction(
+        label="Copy investigation report",
+        detail="Copy this report to clipboard for sharing.",
+        safe_for_user=True,
+    ))
+    report.suggested_actions.append(InvestigationAction(
+        label="Contact admin if state is unexpected",
+        detail=(
+            "If the reported state looks unexpected, share this report "
+            "with cluster admins."
+        ),
+        safe_for_user=True,
+    ))
+    if report.related_jobs:
+        report.suggested_actions.append(InvestigationAction(
+            label="Investigate the jobs using this node",
+            detail="Open per-job investigations to understand current load.",
+            safe_for_user=True,
+        ))
+
+    return report
+
+
+# ---------------------------------------------------------------------------
 # SSH remote support
 # ---------------------------------------------------------------------------
 
