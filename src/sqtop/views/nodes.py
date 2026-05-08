@@ -35,6 +35,10 @@ STATE_COLORS = {
     "unknown":   "dim",
 }
 
+# Cycle order for the transient state filter on the Nodes view (per SPEC §17.2).
+# This is intentionally NOT persisted to config — it is runtime-only state.
+_FILTER_CYCLE: tuple[str, ...] = ("", "idle", "allocated", "mixed", "down", "gpu")
+
 # ColumnSpec(name, min_width, content_max, priority, min_tier)
 COLUMNS: list[ColumnSpec] = [
     ColumnSpec("NODE",       12, 20, 100, "xs"),
@@ -96,6 +100,7 @@ class NodesView(BaseDataTableView[Node]):
     BINDINGS = [
         Binding("enter", "open_node", "Open node", show=True),
         Binding("I", "investigate_node", "Investigate", show=True),
+        Binding("f", "cycle_state_filter", "Filter", show=True),
         Binding("s", "sort_state", show=False),
         Binding("p", "sort_cpu", show=False),
         Binding("m", "sort_mem", show=False),
@@ -110,6 +115,8 @@ class NodesView(BaseDataTableView[Node]):
 
     def __init__(self, interval: float = 2.0, start_offset: float = 0.0) -> None:
         super().__init__(interval=interval, start_offset=start_offset)
+        # Transient runtime filter (SPEC §17.2). NOT persisted to config.
+        self._filter_state: str = ""
         self._last_nodes: list[Node] = []
         self._last_nodes_index: dict[str, int] = {}
         self._last_sorted_nodes: list[Node] = []
@@ -362,8 +369,31 @@ class NodesView(BaseDataTableView[Node]):
         self._render_rows(self._last_sorted_nodes)
         self._restore_table_state(state, self._last_sorted_nodes)
 
+    def _apply_state_filter(self, nodes: list[Node]) -> list[Node]:
+        """Apply the transient state filter (per SPEC §17.2).
+
+        ``""`` is a true no-op and returns the input list verbatim.
+        ``"gpu"`` selects GPU-capable nodes (``gpu_total > 0``) — orthogonal to state.
+        ``"down"`` matches Slurm states containing ``down`` OR ``drain`` (covers
+        ``down``, ``drain``, ``drained``, and decorated variants like ``idle+drain``).
+        Other values do a case-insensitive substring match against ``node.state`` so
+        Slurm decorators (``idle*``, ``mixed-``, ``allocated+``) still pass.
+        """
+        f = self._filter_state
+        if not f:
+            return nodes
+        if f == "gpu":
+            return [n for n in nodes if n.gpu_total > 0]
+        if f == "down":
+            return [
+                n for n in nodes
+                if any(token in n.state.lower() for token in ("down", "drain"))
+            ]
+        return [n for n in nodes if f in n.state.lower()]
+
     def _sorted_visible(self, nodes: list[Node]) -> list[Node]:
         visible = [n for n in nodes if n.name]
+        visible = self._apply_state_filter(visible)
         if self._sort_col == "state":
             return sorted(visible, key=lambda n: n.state, reverse=self._sort_reversed)
         elif self._sort_col == "cpu":
@@ -371,6 +401,22 @@ class NodesView(BaseDataTableView[Node]):
         elif self._sort_col == "mem":
             return sorted(visible, key=_free_mem, reverse=self._sort_reversed)
         return visible
+
+    def action_cycle_state_filter(self) -> None:
+        """Advance the node state filter through the cycle (SPEC §17.2)."""
+        current_idx = (
+            _FILTER_CYCLE.index(self._filter_state)
+            if self._filter_state in _FILTER_CYCLE
+            else 0
+        )
+        self._filter_state = _FILTER_CYCLE[(current_idx + 1) % len(_FILTER_CYCLE)]
+        state = self._capture_table_state()
+        self._last_sorted_nodes = self._sorted_visible(self._last_nodes)
+        self._render_rows(self._last_sorted_nodes)
+        self._restore_table_state(state, self._last_sorted_nodes)
+        self._update_nodes_header(self._last_nodes)
+        label = self._filter_state.upper() if self._filter_state else "ALL"
+        self.app.notify(f"Filter: {label}", title="Node Filter")
 
     def _update_nodes_header(self, nodes: list[Node]) -> None:
         visible = [n for n in nodes if n.name]
@@ -397,6 +443,9 @@ class NodesView(BaseDataTableView[Node]):
             return
 
         now = datetime.now().strftime("%H:%M:%S")
+        filter_tag = ""
+        if self._filter_state:
+            filter_tag = f"  [cyan]· {self._filter_state.upper()}[/]"
         sort_tag = ""
         if self._sort_col:
             arrow = "↑" if self._sort_reversed else "↓"
@@ -407,7 +456,7 @@ class NodesView(BaseDataTableView[Node]):
             f"[cyan]{alloc} alloc[/]  [yellow]{mixed} mixed[/]  "
             f"[red]{down} down[/]  "
             f"[dim]{len(visible)} total  updated {now}[/]"
-            f"{sort_tag}{warn_tag}"
+            f"{filter_tag}{sort_tag}{warn_tag}"
         )
 
     def _update_table(self, nodes: list[Node]) -> None:
