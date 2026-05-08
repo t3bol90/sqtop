@@ -280,6 +280,10 @@ User-defined entries override built-in reasons with the same Slurm reason key. `
 |---|---|
 | `s` | Sort by partition |
 | `n` | Sort by nodes |
+| `y` | Yank visual selection |
+| `v` | Enter visual selection mode |
+| `V` | Enter visual-line selection mode |
+| `Esc` | Exit visual mode |
 
 ### Health tab
 
