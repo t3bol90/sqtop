@@ -189,6 +189,20 @@ Press `I` (capital) on either the Jobs or Nodes view to open an evidence-based i
 
 From any view, `Ctrl+P` (or `S`) opens the command palette; "Investigate job by ID" and "Investigate node by name" prompt for an identifier and open the report. Reports are copyable as plain text via `y` or `Ctrl+C` inside the modal.
 
+### Site-specific pending reasons
+
+Cluster admins or power users can extend sqtop's built-in pending-reason explanations with site-specific entries. Set `[investigation].reasons_path` in `~/.config/sqtop/config.toml` to a TOML file (relative paths resolve against the config directory, `~/.config/sqtop/`):
+
+```toml
+# ~/.config/sqtop/reasons.toml
+[SiteSpecificFoo]
+title = "Site-specific foo"
+detail = "Foo is unavailable due to local cluster policy."
+confidence = "medium"
+```
+
+User-defined entries override built-in reasons with the same Slurm reason key. `confidence` must be one of `"high"`, `"medium"`, or `"low"`. Malformed entries (missing fields, invalid confidence values, non-table entries) are skipped silently — a bad reasons file never crashes sqtop.
+
 ## Keybindings
 
 ### Global
@@ -205,7 +219,7 @@ From any view, `Ctrl+P` (or `S`) opens the command palette; "Investigate job by 
 | `Shift+P` | Save screenshot to `~/.cache/sqtop/screenshots` |
 | `Shift+C` | Column visibility toggle for current tab |
 | `?` | Show keybindings for current pane |
-| `Ctrl+C` | Quit |
+| `Ctrl+C` | Quit (in main views) |
 | `q` | Quit |
 
 ### Jobs tab
