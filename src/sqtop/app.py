@@ -426,6 +426,32 @@ class SqtopApp(App):
             self.action_save_screenshot,
             discover=False,
         )
+        yield SystemCommand(
+            "Investigate job by ID",
+            "Open the investigation report for a job ID you type",
+            self._action_investigate_by_id,
+            discover=False,
+        )
+
+    def _action_investigate_by_id(self) -> None:
+        """Prompt for a job ID, then open JobInvestigationScreen."""
+        from .views.attach_prompt import AttachNodePromptScreen
+        from .views.investigate import JobInvestigationScreen
+
+        def handle(value: str | None) -> None:
+            jid = (value or "").strip()
+            if not jid:
+                return
+            self.push_screen(JobInvestigationScreen(jid))
+
+        self.push_screen(
+            AttachNodePromptScreen(
+                "",
+                title_override="Job ID to investigate",
+                placeholder_override="job id (e.g. 12345)",
+            ),
+            handle,
+        )
 
     def _set_interval_and_save(self, secs: float) -> None:
         self.set_refresh_interval(secs)

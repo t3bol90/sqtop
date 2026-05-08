@@ -243,6 +243,7 @@ class JobsView(BaseDataTableView[Job]):
         Binding("D", "view_dependencies", "Deps", show=False),
         Binding("f", "cycle_state_filter", "Filter", show=True),
         Binding("i", "job_info", "Info", show=True),
+        Binding("I", "investigate_job", "Investigate", show=True),
         Binding("l", "view_log", "Log", show=True),
         Binding("d", "show_detail", "Detail", show=False),
         Binding("a", "expand_array", "Array", show=False),
@@ -674,6 +675,13 @@ class JobsView(BaseDataTableView[Job]):
     def action_job_info(self) -> None:
         if job := self._job_for_cursor():
             self.app.push_screen(JobInfoScreen(job))
+
+    def action_investigate_job(self) -> None:
+        job = self._job_for_cursor()
+        if job is None:
+            return
+        from .investigate import JobInvestigationScreen
+        self.app.push_screen(JobInvestigationScreen(job.job_id, job_name=job.name))
 
     def action_expand_array(self) -> None:
         if job := self._job_for_cursor():

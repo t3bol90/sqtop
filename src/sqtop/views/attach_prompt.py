@@ -26,16 +26,30 @@ class AttachNodePromptScreen(ModalScreen[str | None]):
     #btn-attach-ok, #btn-attach-cancel { width: 100%; margin-top: 1; }
     """
 
-    def __init__(self, default_node: str) -> None:
+    def __init__(
+        self,
+        default_node: str,
+        *,
+        title_override: str | None = None,
+        placeholder_override: str | None = None,
+    ) -> None:
         super().__init__()
         self._default_node = default_node
+        self._title_override = title_override
+        self._placeholder_override = placeholder_override
 
     def compose(self) -> ComposeResult:
+        title = self._title_override or "Attach with node override"
+        placeholder = (
+            self._placeholder_override
+            if self._placeholder_override is not None
+            else "node name/expression (empty to skip -w)"
+        )
         with Static(id="attach-dialog"):
-            yield Label("Attach with node override", id="attach-title")
+            yield Label(title, id="attach-title")
             yield Input(
                 value=self._default_node,
-                placeholder="node name/expression (empty to skip -w)",
+                placeholder=placeholder,
                 id="attach-node-input",
             )
             yield Button("Attach", id="btn-attach-ok", variant="primary")
