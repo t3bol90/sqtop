@@ -13,6 +13,8 @@
 //! Placeholder implementations render simple text until view workers
 //! implement the full tables.
 
+pub mod health;
+pub mod partitions;
 pub mod table_state;
 
 use crate::app::App;
@@ -73,25 +75,5 @@ pub fn render_nodes(f: &mut ratatui::Frame, app: &App, area: Rect) {
 
 /// Render the Partitions tab.
 pub fn render_partitions(f: &mut ratatui::Frame, app: &App, area: Rect) {
-    let text = if app.partitions.is_empty() {
-        vec![
-            Line::from("No partitions found"),
-            Line::from(""),
-            Line::from("This is a placeholder. View workers will implement the full table."),
-        ]
-    } else {
-        vec![
-            Line::from(format!("{} partitions loaded", app.partitions.len())),
-            Line::from(""),
-            Line::from("View workers will render the partitions table here."),
-        ]
-    };
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("Partitions")
-        .style(Style::default().fg(Color::White));
-
-    let paragraph = Paragraph::new(text).block(block);
-    f.render_widget(paragraph, area);
+    partitions::render(f, app, area);
 }
