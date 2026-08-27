@@ -14,6 +14,7 @@
 //! implement the full tables.
 
 pub mod health;
+pub mod jobs;
 pub mod partitions;
 pub mod table_state;
 
@@ -24,28 +25,15 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
 /// Render the Jobs tab.
-pub fn render_jobs(f: &mut ratatui::Frame, app: &App, area: Rect) {
-    let text = if app.jobs.is_empty() {
-        vec![
-            Line::from("No jobs found"),
-            Line::from(""),
-            Line::from("This is a placeholder. View workers will implement the full table."),
-        ]
-    } else {
-        vec![
-            Line::from(format!("{} jobs loaded", app.jobs.len())),
-            Line::from(""),
-            Line::from("View workers will render the jobs table here."),
-        ]
-    };
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("Jobs")
-        .style(Style::default().fg(Color::White));
-
-    let paragraph = Paragraph::new(text).block(block);
-    f.render_widget(paragraph, area);
+pub fn render_jobs(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    jobs::render(
+        f,
+        area,
+        &mut app.jobs_view,
+        &app.jobs,
+        &app.config,
+        &std::env::var("USER").unwrap_or_default(),
+    );
 }
 
 /// Render the Nodes tab.

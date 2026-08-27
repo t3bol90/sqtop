@@ -5,6 +5,7 @@ use crate::slurm::exec::Runner;
 use crate::slurm::model::{ClusterSummary, Job, Node};
 use crate::slurm::parse::{parse_partition_row, parse_squeue_row, SINFO_PARTITION_FMT, SQUEUE_FMT};
 use crate::views;
+use crate::views::jobs::JobsView;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use ratatui::backend::Backend;
@@ -106,6 +107,7 @@ pub struct App {
     pub status: Option<String>,
     pub should_quit: bool,
     pub modal: Modal,
+    pub jobs_view: JobsView,
     refresh_rx: mpsc::Receiver<Msg>,
     last_refresh: Option<Instant>,
 }
@@ -123,7 +125,10 @@ impl App {
             refresh_worker(worker_runner, worker_config, tx);
         });
 
+        let jobs_view = JobsView::from_config(&config);
+
         Self {
+            jobs_view,
             config,
             runner,
             tab: Tab::Jobs,
@@ -307,7 +312,7 @@ pub fn run<B: Backend>(terminal: &mut Terminal<B>, config: Config) -> Result<()>
         app.drain_messages();
 
         // Render
-        terminal.draw(|f| render(f, &app))?;
+        terminal.draw(|f| render(f, &mut app))?;
 
         // Exit if requested
         if app.should_quit {
@@ -331,7 +336,7 @@ pub fn run<B: Backend>(terminal: &mut Terminal<B>, config: Config) -> Result<()>
 }
 
 /// Render the app to the terminal.
-fn render(f: &mut ratatui::Frame, app: &App) {
+fn render(f: &mut ratatui::Frame, app: &mut App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -370,7 +375,7 @@ fn render_tabs(f: &mut ratatui::Frame, app: &App, area: Rect) {
 }
 
 /// Render the main content area.
-fn render_content(f: &mut ratatui::Frame, app: &App, area: Rect) {
+fn render_content(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     match app.tab {
         Tab::Jobs => views::render_jobs(f, app, area),
         Tab::Nodes => views::render_nodes(f, app, area),
@@ -482,8 +487,8 @@ mod tests {
         // Should not panic
         terminal
             .draw(|f| {
-                let app = App::new(config);
-                render(f, &app);
+                let mut app = App::new(config);
+                render(f, &mut app);
             })
             .unwrap();
     }
