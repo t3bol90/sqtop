@@ -7,11 +7,9 @@
 //!
 //! Each render function receives:
 //! - `f: &mut Frame` - ratatui frame
-//! - `app: &App` - application state
+//! - `app: &App` (or `&mut App` where the view owns cursor state)
 //! - `area: Rect` - rendering area
 //!
-//! Placeholder implementations render simple text until view workers
-//! implement the full tables.
 
 pub mod health;
 pub mod jobs;
@@ -21,9 +19,6 @@ pub mod table_state;
 
 use crate::app::App;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Paragraph};
 
 /// Render the Jobs tab.
 pub fn render_jobs(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
@@ -38,10 +33,12 @@ pub fn render_jobs(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 }
 
 /// Render the Nodes tab.
-pub fn render_nodes(f: &mut ratatui::Frame, app: &App, area: Rect) {
-    use nodes::NodesView;
-    let mut view = NodesView::new(&app.config);
-    view.render(f, &app.nodes, area);
+pub fn render_nodes(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    // Split the borrow so the view can be mutated while reading node data.
+    let App {
+        nodes, nodes_view, ..
+    } = app;
+    nodes_view.render(f, nodes, area);
 }
 
 /// Render the Partitions tab.

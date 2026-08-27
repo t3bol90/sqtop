@@ -2,10 +2,11 @@
 
 use crate::config::Config;
 use crate::slurm::exec::Runner;
+use crate::slurm::fetch;
 use crate::slurm::model::{ClusterSummary, Job, Node};
-use crate::slurm::parse::{parse_partition_row, parse_squeue_row, SINFO_PARTITION_FMT, SQUEUE_FMT};
 use crate::views;
 use crate::views::jobs::JobsView;
+use crate::views::nodes::NodesView;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use ratatui::backend::Backend;
@@ -108,7 +109,9 @@ pub struct App {
     pub should_quit: bool,
     pub modal: Modal,
     pub jobs_view: JobsView,
+    pub nodes_view: NodesView,
     refresh_rx: mpsc::Receiver<Msg>,
+    request_tx: mpsc::Sender<Tab>,
     last_refresh: Option<Instant>,
 }
 
@@ -116,19 +119,19 @@ impl App {
     /// Create a new App with the given config.
     pub fn new(config: Config) -> Self {
         let runner = Runner::new();
-        let (tx, rx) = mpsc::channel();
+        let (msg_tx, msg_rx) = mpsc::channel();
+        let (request_tx, request_rx) = mpsc::channel();
 
-        // Spawn background refresh worker
+        // One worker thread serves fetch requests so the UI never blocks on Slurm.
         let worker_runner = runner.clone();
-        let worker_config = config.clone();
-        std::thread::spawn(move || {
-            refresh_worker(worker_runner, worker_config, tx);
-        });
+        std::thread::spawn(move || refresh_worker(worker_runner, request_rx, msg_tx));
 
         let jobs_view = JobsView::from_config(&config);
+        let nodes_view = NodesView::new(&config);
 
         Self {
             jobs_view,
+            nodes_view,
             config,
             runner,
             tab: Tab::Jobs,
@@ -138,7 +141,8 @@ impl App {
             status: None,
             should_quit: false,
             modal: Modal::None,
-            refresh_rx: rx,
+            refresh_rx: msg_rx,
+            request_tx,
             last_refresh: None,
         }
     }
@@ -218,117 +222,52 @@ impl App {
         }
     }
 
-    /// Mark that a refresh has occurred.
-    pub fn mark_refreshed(&mut self) {
+    /// Ask the worker to refresh the current tab and reset the interval clock.
+    pub fn request_refresh(&mut self) {
+        let _ = self.request_tx.send(self.tab);
         self.last_refresh = Some(Instant::now());
     }
 }
 
-/// Background worker that periodically fetches data from Slurm.
-fn refresh_worker(runner: Runner, config: Config, tx: mpsc::Sender<Msg>) {
-    loop {
-        // Fetch jobs
-        match fetch_jobs(&runner) {
-            Ok(jobs) => {
-                let _ = tx.send(Msg::Jobs(jobs));
-            }
-            Err(e) => {
-                let _ = tx.send(Msg::Error(format!("Failed to fetch jobs: {}", e)));
-            }
+/// Background worker: serves fetch requests so the UI thread never blocks on Slurm.
+///
+/// The main loop owns the refresh cadence (see `App::should_refresh`) and sends the
+/// tab to refresh; this thread answers with the fetched data.
+fn refresh_worker(runner: Runner, requests: mpsc::Receiver<Tab>, tx: mpsc::Sender<Msg>) {
+    for tab in requests {
+        let msg = match tab {
+            Tab::Jobs => Msg::Jobs(fetch::fetch_jobs(&runner)),
+            Tab::Nodes => Msg::Nodes(fetch::fetch_nodes(&runner)),
+            Tab::Partitions => Msg::Partitions(fetch::fetch_cluster_summary(&runner)),
+        };
+        if tx.send(msg).is_err() {
+            break; // UI is gone
         }
-        std::thread::sleep(Duration::from_secs_f64(config.interval.jobs));
-
-        // Fetch nodes
-        match fetch_nodes(&runner) {
-            Ok(nodes) => {
-                let _ = tx.send(Msg::Nodes(nodes));
-            }
-            Err(e) => {
-                let _ = tx.send(Msg::Error(format!("Failed to fetch nodes: {}", e)));
-            }
-        }
-        std::thread::sleep(Duration::from_secs_f64(config.interval.nodes));
-
-        // Fetch partitions
-        match fetch_partitions(&runner) {
-            Ok(partitions) => {
-                let _ = tx.send(Msg::Partitions(partitions));
-            }
-            Err(e) => {
-                let _ = tx.send(Msg::Error(format!("Failed to fetch partitions: {}", e)));
-            }
-        }
-        std::thread::sleep(Duration::from_secs_f64(config.interval.partitions));
     }
 }
 
-/// Fetch jobs using squeue.
-fn fetch_jobs(runner: &Runner) -> Result<Vec<Job>> {
-    let cmd = format!("squeue --format '{}' --noheader", SQUEUE_FMT);
-    let (stdout, ok, stderr) = runner.run_result(&cmd);
-    if !ok {
-        anyhow::bail!("squeue failed: {}", stderr);
-    }
-
-    let mut jobs = Vec::new();
-    for line in stdout.lines() {
-        if let Some(job) = parse_squeue_row(line) {
-            jobs.push(job);
-        }
-    }
-    Ok(jobs)
-}
-
-/// Fetch nodes using sinfo.
-fn fetch_nodes(_runner: &Runner) -> Result<Vec<Node>> {
-    // Node row parser is assigned to the Nodes view worker.
-    // Fail loudly so the gap is visible in the status bar, not silently as "no nodes found".
-    anyhow::bail!("nodes view not implemented yet")
-}
-
-/// Fetch partitions using sinfo.
-fn fetch_partitions(runner: &Runner) -> Result<Vec<ClusterSummary>> {
-    let cmd = format!("sinfo --format '{}' --noheader", SINFO_PARTITION_FMT);
-    let (stdout, ok, stderr) = runner.run_result(&cmd);
-    if !ok {
-        anyhow::bail!("sinfo failed: {}", stderr);
-    }
-
-    let mut partitions = Vec::new();
-    for line in stdout.lines() {
-        if let Some(partition) = parse_partition_row(line) {
-            partitions.push(partition);
-        }
-    }
-    Ok(partitions)
-}
-
-/// Main event loop.
+/// Run the application event loop until the user quits.
 pub fn run<B: Backend>(terminal: &mut Terminal<B>, config: Config) -> Result<()> {
     let mut app = App::new(config);
 
     loop {
-        // Drain any pending messages from refresh worker
         app.drain_messages();
 
-        // Render
         terminal.draw(|f| render(f, &mut app))?;
 
-        // Exit if requested
         if app.should_quit {
             break;
         }
 
-        // Poll for events with a small timeout to keep the loop responsive
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
                 app.handle_key(key.code, key.modifiers);
             }
         }
 
-        // Check if it's time to refresh
+        // Ask the worker for fresh data when the tab's interval has elapsed.
         if app.should_refresh() {
-            app.mark_refreshed();
+            app.request_refresh();
         }
     }
 

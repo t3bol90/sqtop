@@ -566,11 +566,11 @@ fn cpu_bar(alloc: &str, total: &str) -> (String, Option<Color>) {
     }
 
     // Compute percentage (round half away from zero, matching Python)
-    let pct = ((a as f64 / t as f64) * 100.0).round() as u8;
+    let pct = ((a as f64 / t as f64) * 100.0).round_ties_even() as u8;
 
     // Compute filled cells
     let bar_width = 8;
-    let filled = ((pct as f64 / 100.0) * (bar_width as f64)).round() as usize;
+    let filled = ((pct as f64 / 100.0) * (bar_width as f64)).round_ties_even() as usize;
 
     // Build bar
     let bar = "█".repeat(filled) + &"░".repeat(bar_width - filled);
@@ -598,11 +598,11 @@ fn gpu_bar(alloc: u32, total: u32) -> (String, Option<Color>) {
     }
 
     // Compute percentage
-    let pct = ((alloc as f64 / total as f64) * 100.0).round() as u8;
+    let pct = ((alloc as f64 / total as f64) * 100.0).round_ties_even() as u8;
 
     // Compute filled cells
     let bar_width = 8;
-    let filled = ((pct as f64 / 100.0) * (bar_width as f64)).round() as usize;
+    let filled = ((pct as f64 / 100.0) * (bar_width as f64)).round_ties_even() as usize;
 
     // Build bar
     let bar = "█".repeat(filled) + &"░".repeat(bar_width - filled);
@@ -1078,10 +1078,12 @@ mod tests {
     }
 
     #[test]
-    fn test_gpu_bar_filled_cells_rounding() {
-        // At 62.5%: Rust rounds to 63% (half away from zero)
+    fn test_gpu_bar_rounds_ties_to_even_like_python() {
+        // 5/8 = 62.5%. Python's round() is banker's rounding (half to even) and
+        // yields 62, so we use round_ties_even to keep the displayed value identical.
+        // An 8-GPU/8-CPU node makes this tie common, not a corner case.
         let (text, _) = gpu_bar(5, 8);
         assert!(text.contains("█████░░░")); // 5 filled, 3 empty
-        assert!(text.contains("63%")); // 5/8 = 0.625 -> 62.5% -> rounds to 63% in Rust
+        assert!(text.contains("62%"));
     }
 }
