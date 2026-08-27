@@ -1,6 +1,6 @@
 //! Pure parsers for Slurm CLI output. No I/O lives here.
 
-use crate::slurm::model::{ClusterSummary, Job};
+use crate::slurm::model::{ClusterSummary, Job, Node};
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -18,6 +18,9 @@ pub const SQUEUE_FMT: &str = "%i|%j|%u|%T|%P|%D|%C|%M|%l|%R|%N|%q";
 
 /// Shared `sinfo` format string for the Partitions view.
 pub const SINFO_PARTITION_FMT: &str = "%P|%a|%l|%D|%T|%N";
+
+/// Shared `sinfo` format string for node-row parsing in fetch_nodes.
+pub const SINFO_NODE_FMT: &str = "%n|%T|%P|%c|%C|%m|%e|%O|%G";
 
 /// Slurm null sentinels we treat as "not provided".
 pub const NULL_SENTINELS: &[&str] = &["", "(null)", "N/A", "None", "none"];
@@ -96,6 +99,52 @@ pub fn parse_partition_row(line: &str) -> Option<ClusterSummary> {
         nodes: parts[3].to_string(),
         state: parts[4].to_string(),
         nodelist: parts[5].to_string(),
+    })
+}
+
+/// Parse a single node row from sinfo using SINFO_NODE_FMT.
+///
+/// Expected format: `%n|%T|%P|%c|%C|%m|%e|%O|%G` (9 fields).
+/// - parts[4] is `%C` = "allocated/idle/other/total", e.g. "2/6/0/8".
+/// - cpus_total = 4th element, cpus_alloc = 1st element,
+///   BUT only when the split yields exactly 4 elements; otherwise both are "?".
+/// - gpu_total = parse_gpu_count(parts[8])
+/// - gpu_alloc = gpus_alloc.get(name) or 0, forced to 0 when gpu_total == 0.
+pub fn parse_node_row(
+    line: &str,
+    gpus_alloc: &std::collections::HashMap<String, u32>,
+) -> Option<Node> {
+    let parts: Vec<&str> = line.split('|').collect();
+    if parts.len() < 9 {
+        return None;
+    }
+
+    let name = parts[0].to_string();
+    let cpu_parts: Vec<&str> = parts[4].split('/').collect();
+    let (cpus_alloc, cpus_total) = if cpu_parts.len() == 4 {
+        (cpu_parts[0].to_string(), cpu_parts[3].to_string())
+    } else {
+        ("?".to_string(), "?".to_string())
+    };
+
+    let gpu_total = parse_gpu_count(parts[8]);
+    let gpu_alloc = if gpu_total > 0 {
+        *gpus_alloc.get(&name).unwrap_or(&0)
+    } else {
+        0
+    };
+
+    Some(Node {
+        name,
+        state: parts[1].to_string(),
+        partition: parts[2].to_string(),
+        cpus_total,
+        cpus_alloc,
+        memory_total: parts[5].to_string(),
+        memory_free: parts[6].to_string(),
+        load: parts[7].to_string(),
+        gpu_total,
+        gpu_alloc,
     })
 }
 

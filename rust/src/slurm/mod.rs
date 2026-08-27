@@ -4,5 +4,6 @@
 //! invocation into the command history read by the Health view.
 
 pub mod exec;
+pub mod fetch;
 pub mod model;
 pub mod parse;
