@@ -6,24 +6,33 @@
 
 ## Install
 
-### Option 1: install from GitHub with uv tool
+**Rust version (v0.2.x, recommended):**
+
+### Option 1: install from GitHub Release
+
+Download the latest release for your platform from [Releases](https://github.com/t3bol90/sqtop/releases):
 
 ```bash
-uv tool install git+https://github.com/t3bol90/sqtop.git
+# Example for Linux x86_64 (glibc)
+curl -LO https://github.com/t3bol90/sqtop/releases/download/v0.2.0/sqtop-v0.2.0-x86_64-unknown-linux-gnu.tar.gz
+tar xzf sqtop-v0.2.0-x86_64-unknown-linux-gnu.tar.gz
+sudo mv sqtop /usr/local/bin/
 ```
 
-### Option 2: install from local source checkout
+Available targets: `x86_64-unknown-linux-gnu`, `x86_64-unknown-linux-musl` (for older systems), `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`.
+
+### Option 2: install from crates.io
 
 ```bash
-git clone https://github.com/t3bol90/sqtop.git
-cd sqtop
-uv tool install .
+cargo install sqtop
 ```
 
-### Upgrade
+**Python version (v0.1.x, deprecated):**
+
+The final Python release is `v0.1.0`. Install with:
 
 ```bash
-uv tool upgrade sqtop
+uv tool install git+https://github.com/t3bol90/sqtop.git@v0.1.0
 ```
 
 ## Usage
