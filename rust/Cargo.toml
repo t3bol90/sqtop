@@ -1,0 +1,28 @@
+[package]
+name = "sqtop"
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.82"
+description = "A TUI dashboard for Slurm clusters - like htop, but for Slurm"
+repository = "https://github.com/t3bol90/sqtop"
+license = "MIT"
+
+[[bin]]
+name = "sqtop"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+crossterm = "0.28"
+ratatui = "0.29"
+serde = { version = "1", features = ["derive"] }
+toml_edit = "0.22"
+
+[dev-dependencies]
+insta = "1"
+
+[profile.release]
+lto = true
+strip = true
+codegen-units = 1
