@@ -1,6 +1,8 @@
 mod app;
+mod columns;
 mod config;
 mod investigation;
+mod responsive;
 mod slurm;
 mod views;
 
