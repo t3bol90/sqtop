@@ -406,23 +406,11 @@ static NODE_STATES: LazyLock<HashMap<&str, (&str, &str, &str)>> = LazyLock::new(
     map
 });
 
-const NODE_STATE_SUFFIXES: &str = "*-+~#@!%$";
-
 const UNKNOWN_NODE_STATE: (&str, &str, &str) = (
     "Unrecognized node state",
     "sqtop cannot confidently classify this node state.",
     "low",
 );
-
-/// Strip Slurm decoration suffixes and uppercase the bare token.
-// TODO(port): de-duplicate against slurm::parse::normalize_node_state_token at integration.
-pub(crate) fn normalize_node_state(state: &str) -> String {
-    let mut s = state.trim().to_string();
-    while !s.is_empty() && NODE_STATE_SUFFIXES.contains(s.chars().last().unwrap()) {
-        s.pop();
-    }
-    s.to_uppercase()
-}
 
 /// Map a Slurm node-state token to a user-facing explanation.
 ///
@@ -446,7 +434,7 @@ pub fn explain_node_state(state: &str) -> InvestigationExplanation {
     if raw.contains('+') {
         let parts: Vec<String> = raw
             .split('+')
-            .map(normalize_node_state)
+            .map(crate::slurm::parse::normalize_node_state_token)
             .filter(|p| !p.is_empty())
             .collect();
 
@@ -461,7 +449,7 @@ pub fn explain_node_state(state: &str) -> InvestigationExplanation {
         }
     }
 
-    let key = normalize_node_state(&raw);
+    let key = crate::slurm::parse::normalize_node_state_token(&raw);
     if let Some((title, detail, confidence)) = NODE_STATES.get(key.as_str()) {
         return InvestigationExplanation::new(
             title.to_string(),

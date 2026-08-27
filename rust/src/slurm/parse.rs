@@ -14,26 +14,21 @@ static ALLOC_TRES_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"gres/gpu=(
 
 /// Shared `squeue` format string. The field count is fixed at 12; any change
 /// here must be matched in `parse_squeue_row`.
-#[allow(dead_code)]
 pub const SQUEUE_FMT: &str = "%i|%j|%u|%T|%P|%D|%C|%M|%l|%R|%N|%q";
 
 /// Shared `sinfo` format string for the Partitions view.
-#[allow(dead_code)]
 pub const SINFO_PARTITION_FMT: &str = "%P|%a|%l|%D|%T|%N";
 
 /// Slurm null sentinels we treat as "not provided".
 pub const NULL_SENTINELS: &[&str] = &["", "(null)", "N/A", "None", "none"];
 
 /// Pending job states (full and abbreviated).
-#[allow(dead_code)]
 pub const PENDING_STATES: &[&str] = &["PENDING", "PD"];
 
 /// Running job states (full and abbreviated).
-#[allow(dead_code)]
 pub const RUNNING_STATES: &[&str] = &["RUNNING", "R"];
 
 /// Terminal job states (full and abbreviated).
-#[allow(dead_code)]
 pub const TERMINAL_STATES: &[&str] = &[
     "COMPLETED",
     "CD",
@@ -55,7 +50,6 @@ pub const TERMINAL_STATES: &[&str] = &[
 ///
 /// Returns `None` for malformed rows (fewer than 12 pipe-separated fields)
 /// so callers can keep going on partial output.
-#[allow(dead_code)]
 pub fn parse_squeue_row(line: &str) -> Option<Job> {
     let parts: Vec<&str> = line.split('|').collect();
     if parts.len() < 12 {
@@ -89,7 +83,6 @@ pub fn parse_squeue_row(line: &str) -> Option<Job> {
 /// Parse one sinfo row for partition data into a `ClusterSummary`.
 ///
 /// Returns `None` for malformed rows (fewer than 6 pipe-separated fields).
-#[allow(dead_code)]
 pub fn parse_partition_row(line: &str) -> Option<ClusterSummary> {
     let parts: Vec<&str> = line.split('|').collect();
     if parts.len() < 6 {
@@ -111,7 +104,6 @@ pub fn parse_partition_row(line: &str) -> Option<ClusterSummary> {
 /// Sums across multiple gpu: groups, e.g. `gpu:a100:4,gpu:b100:2` → 6.
 /// Single-group strings (`gpu:4`, `gpu:a100:4`, `gpu:a100:4(IDX:...)`) are
 /// unchanged. Empty / non-GPU / `(null)` inputs return 0.
-#[allow(dead_code)]
 pub fn parse_gpu_count(gres_str: &str) -> u32 {
     GPU_COUNT_RE
         .captures_iter(gres_str)
@@ -124,7 +116,6 @@ pub fn parse_gpu_count(gres_str: &str) -> u32 {
 /// Returns a map of node_name → gpus_allocated.
 /// Reads AllocTRES (present in Slurm 24.x) and falls back to GresUsed
 /// (older Slurm versions).
-#[allow(dead_code)]
 pub fn parse_gpus_alloc(scontrol_output: &str) -> HashMap<String, u32> {
     let mut result = HashMap::new();
     let mut node_name = String::new();
@@ -162,7 +153,6 @@ pub fn parse_gpus_alloc(scontrol_output: &str) -> HashMap<String, u32> {
 ///
 /// Returns `Some(0)` for empty or "0" input, `None` for malformed input.
 /// Callers should treat `None` as 0 to match Python behavior.
-#[allow(dead_code)]
 pub fn parse_slurm_duration(s: &str) -> Option<u64> {
     let s = s.trim();
     if s.is_empty() || s == "0" {
@@ -202,7 +192,6 @@ pub fn parse_slurm_duration(s: &str) -> Option<u64> {
 /// Parse key=value pairs from scontrol output.
 ///
 /// Tokens without '=' are silently skipped.
-#[allow(dead_code)]
 pub fn parse_scontrol_kv(output: &str) -> HashMap<String, String> {
     let mut result = HashMap::new();
 
@@ -216,7 +205,6 @@ pub fn parse_scontrol_kv(output: &str) -> HashMap<String, String> {
 }
 
 /// Check if a value carries real Slurm content (not a null sentinel).
-#[allow(dead_code)]
 pub fn is_present(value: Option<&str>) -> bool {
     match value {
         None => false,
@@ -225,7 +213,6 @@ pub fn is_present(value: Option<&str>) -> bool {
 }
 
 /// Format a value for display, mapping nulls to "(unavailable)".
-#[allow(dead_code)]
 pub fn display(value: Option<&str>) -> String {
     match value {
         Some(v) if !NULL_SENTINELS.contains(&v.trim()) => v.trim().to_string(),
@@ -236,7 +223,6 @@ pub fn display(value: Option<&str>) -> String {
 /// Strip Slurm decoration suffixes and uppercase the bare token.
 ///
 /// Decoration suffixes: `*-+~#@!%$`
-#[allow(dead_code)]
 pub fn normalize_node_state_token(state: &str) -> String {
     const SUFFIXES: &str = "*-+~#@!%$";
 
@@ -247,7 +233,6 @@ pub fn normalize_node_state_token(state: &str) -> String {
 }
 
 /// Parse a numeric Slurm field; return `None` on any failure.
-#[allow(dead_code)]
 pub fn safe_int(value: Option<&str>) -> Option<i32> {
     match value {
         None => None,
@@ -509,25 +494,6 @@ mod tests {
     }
 
     // ── safe_int ──────────────────────────────────────────────────────────
-
-    #[test]
-    fn debug_regex() {
-        let test_str = "gpu:4";
-        println!("Testing: {}", test_str);
-        let result = parse_gpu_count(test_str);
-        println!("Result: {}", result);
-
-        use regex::Regex;
-        let re = Regex::new(r"\bgpu:(?:[^:,()\s]+:)?(\d+)").unwrap();
-        println!("Regex is valid");
-
-        for cap in re.captures_iter(test_str) {
-            println!("Capture: {:?}", cap);
-            if let Some(m) = cap.get(1) {
-                println!("Group 1: {}", m.as_str());
-            }
-        }
-    }
 
     #[test]
     fn test_safe_int() {
