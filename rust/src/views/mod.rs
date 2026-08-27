@@ -15,6 +15,7 @@
 
 pub mod health;
 pub mod jobs;
+pub mod nodes;
 pub mod partitions;
 pub mod table_state;
 
@@ -38,27 +39,9 @@ pub fn render_jobs(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
 /// Render the Nodes tab.
 pub fn render_nodes(f: &mut ratatui::Frame, app: &App, area: Rect) {
-    let text = if app.nodes.is_empty() {
-        vec![
-            Line::from("No nodes found"),
-            Line::from(""),
-            Line::from("This is a placeholder. View workers will implement the full table."),
-        ]
-    } else {
-        vec![
-            Line::from(format!("{} nodes loaded", app.nodes.len())),
-            Line::from(""),
-            Line::from("View workers will render the nodes table here."),
-        ]
-    };
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title("Nodes")
-        .style(Style::default().fg(Color::White));
-
-    let paragraph = Paragraph::new(text).block(block);
-    f.render_widget(paragraph, area);
+    use nodes::NodesView;
+    let mut view = NodesView::new(&app.config);
+    view.render(f, &app.nodes, area);
 }
 
 /// Render the Partitions tab.
