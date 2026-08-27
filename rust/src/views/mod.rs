@@ -12,6 +12,8 @@
 //!
 
 pub mod health;
+pub mod history;
+pub mod investigate;
 pub mod jobs;
 pub mod nodes;
 pub mod partitions;
