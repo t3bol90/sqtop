@@ -28,6 +28,8 @@ pub struct ColumnToggleState {
     focused: usize,
     // Number of column checkboxes before buttons
     checkbox_count: usize,
+    // Flag indicating config was modified (for persistence)
+    pub config_modified: bool,
 }
 
 impl ColumnToggleState {
@@ -63,6 +65,7 @@ impl ColumnToggleState {
             display_order,
             focused: 0,
             checkbox_count,
+            config_modified: false,
         }
     }
 
@@ -93,6 +96,7 @@ impl ColumnToggleState {
                     }
                     // Update config
                     self.update_config(config);
+                    self.config_modified = true;
                     ModalOutcome::Continue
                 } else if self.focused == self.checkbox_count {
                     // Reset button

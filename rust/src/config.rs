@@ -547,6 +547,8 @@ fn load_inner(path: &Path) -> Result<Config> {
 // ── Save and Update ───────────────────────────────────────────────────────────
 
 /// Persist theme and broadcast interval to all three view keys.
+/// Used by Settings UI for theme/interval changes.
+#[allow(dead_code)]
 pub fn save(path: &Path, theme: &str, interval: f64) -> Result<()> {
     let mut updates = HashMap::new();
     updates.insert("theme".to_string(), toml::Value::String(theme.to_string()));
@@ -820,12 +822,6 @@ fn atomic_write(path: &Path, text: &str) -> Result<()> {
 // ── Legacy helper (kept for API parity) ───────────────────────────────────────
 
 /// Escape a string for TOML basic-string literals.
-///
-/// Retained for legacy callers and tests; toml_edit handles escaping internally.
-pub fn toml_escape(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1023,28 +1019,6 @@ jobs = 1.0
         let cfg = load(&config_file);
         assert_eq!(cfg.jobs.name_max, 30);
         assert_eq!(cfg.jobs.user_max, 12);
-    }
-
-    // ── toml_escape ───────────────────────────────────────────────────────────
-
-    #[test]
-    fn test_toml_escape_backslash() {
-        assert_eq!(toml_escape("a\\b"), "a\\\\b");
-    }
-
-    #[test]
-    fn test_toml_escape_double_quote() {
-        assert_eq!(toml_escape("a\"b"), "a\\\"b");
-    }
-
-    #[test]
-    fn test_toml_escape_combined() {
-        assert_eq!(toml_escape("a\\\"b"), "a\\\\\\\"b");
-    }
-
-    #[test]
-    fn test_toml_escape_no_special_chars() {
-        assert_eq!(toml_escape("hello world"), "hello world");
     }
 
     // ── legacy interval migration ─────────────────────────────────────────────

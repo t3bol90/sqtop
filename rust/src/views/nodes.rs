@@ -18,6 +18,7 @@ use ratatui::{
 };
 use std::collections::HashMap;
 use std::sync::LazyLock;
+use toml;
 
 /// State filter cycle for the Nodes view (SPEC §17.2).
 ///
@@ -70,6 +71,8 @@ pub struct NodesView {
     rebuild_cache_names: Vec<String>,
     /// Warn threshold for down nodes.
     warn_down_nodes: usize,
+    /// Pending config update to persist (set by view actions, consumed by app).
+    pending_config_update: Option<HashMap<String, toml::Value>>,
 }
 
 impl NodesView {
@@ -102,7 +105,13 @@ impl NodesView {
             rebuild_cache_width: 0,
             rebuild_cache_names: Vec::new(),
             warn_down_nodes,
+            pending_config_update: None,
         }
+    }
+
+    /// Take pending config update (returns and clears it).
+    pub fn take_pending_config_update(&mut self) -> Option<HashMap<String, toml::Value>> {
+        self.pending_config_update.take()
     }
 
     /// Apply the state filter to a list of nodes.
@@ -270,6 +279,19 @@ impl NodesView {
             self.sort_col = col.to_string();
             self.sort_reversed = false;
         }
+        // Persist sort state
+        let mut view_state = toml::Table::new();
+        view_state.insert(
+            "nodes_sort_col".to_string(),
+            toml::Value::String(self.sort_col.clone()),
+        );
+        view_state.insert(
+            "nodes_sort_reversed".to_string(),
+            toml::Value::Boolean(self.sort_reversed),
+        );
+        let mut update = HashMap::new();
+        update.insert("view_state".to_string(), toml::Value::Table(view_state));
+        self.pending_config_update = Some(update);
     }
     /// Cycle the reorder target to the next visible column (wraps).
     pub fn cycle_reorder_target(&mut self) {
@@ -297,6 +319,17 @@ impl NodesView {
                 if self.reorder_target_idx > 0 {
                     self.reorder_target_idx -= 1;
                 }
+                // Persist column order
+                let mut columns = toml::Table::new();
+                let order_array: Vec<toml::Value> = self
+                    .column_order
+                    .iter()
+                    .map(|s| toml::Value::String(s.clone()))
+                    .collect();
+                columns.insert("nodes_order".to_string(), toml::Value::Array(order_array));
+                let mut update = HashMap::new();
+                update.insert("columns".to_string(), toml::Value::Table(columns));
+                self.pending_config_update = Some(update);
             }
         }
     }
@@ -318,6 +351,17 @@ impl NodesView {
                 // Clamp target index
                 let visible_count = self.current_cols.len();
                 self.reorder_target_idx = (self.reorder_target_idx + 1).min(visible_count - 1);
+                // Persist column order
+                let mut columns = toml::Table::new();
+                let order_array: Vec<toml::Value> = self
+                    .column_order
+                    .iter()
+                    .map(|s| toml::Value::String(s.clone()))
+                    .collect();
+                columns.insert("nodes_order".to_string(), toml::Value::Array(order_array));
+                let mut update = HashMap::new();
+                update.insert("columns".to_string(), toml::Value::Table(columns));
+                self.pending_config_update = Some(update);
             }
         }
     }

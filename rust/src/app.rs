@@ -780,31 +780,115 @@ impl App {
                     }
                 }
                 Modal::ColumnToggle(state) => {
+                    // Capture config_modified before consuming state
+                    let config_was_modified = state.config_modified;
                     match state.handle_key(key_event, &mut self.config) {
                         ModalOutcome::Dismiss(result) => {
                             self.modal = Modal::None;
                             if result == ColumnToggleResult::Reset {
                                 // Reset column order for the current tab
+                                let mut update = std::collections::HashMap::new();
+                                let mut columns = toml::Table::new();
                                 match self.tab {
                                     Tab::Jobs => {
                                         self.config.columns.jobs_order.clear();
                                         self.config.columns.jobs_hidden.clear();
+                                        columns.insert(
+                                            "jobs_order".to_string(),
+                                            toml::Value::Array(vec![]),
+                                        );
+                                        columns.insert(
+                                            "jobs_hidden".to_string(),
+                                            toml::Value::Array(vec![]),
+                                        );
                                     }
                                     Tab::Nodes => {
                                         self.config.columns.nodes_order.clear();
                                         self.config.columns.nodes_hidden.clear();
+                                        columns.insert(
+                                            "nodes_order".to_string(),
+                                            toml::Value::Array(vec![]),
+                                        );
+                                        columns.insert(
+                                            "nodes_hidden".to_string(),
+                                            toml::Value::Array(vec![]),
+                                        );
                                     }
                                     Tab::Partitions => {
                                         self.config.columns.partitions_order.clear();
                                         self.config.columns.partitions_hidden.clear();
+                                        columns.insert(
+                                            "partitions_order".to_string(),
+                                            toml::Value::Array(vec![]),
+                                        );
+                                        columns.insert(
+                                            "partitions_hidden".to_string(),
+                                            toml::Value::Array(vec![]),
+                                        );
                                     }
                                     Tab::History | Tab::Health => {
                                         // No column config for these tabs
                                     }
                                 }
+                                if !columns.is_empty() {
+                                    update
+                                        .insert("columns".to_string(), toml::Value::Table(columns));
+                                    self.persist_config_async(update);
+                                }
                                 // Reload views with new column config
                                 self.jobs_view = JobsView::from_config(&self.config);
                                 self.nodes_view = NodesView::new(&self.config);
+                            } else if config_was_modified {
+                                // Persist hidden column changes
+                                let mut update = std::collections::HashMap::new();
+                                let mut columns = toml::Table::new();
+                                match self.tab {
+                                    Tab::Jobs => {
+                                        let hidden_array: Vec<toml::Value> = self
+                                            .config
+                                            .columns
+                                            .jobs_hidden
+                                            .iter()
+                                            .map(|s| toml::Value::String(s.clone()))
+                                            .collect();
+                                        columns.insert(
+                                            "jobs_hidden".to_string(),
+                                            toml::Value::Array(hidden_array),
+                                        );
+                                    }
+                                    Tab::Nodes => {
+                                        let hidden_array: Vec<toml::Value> = self
+                                            .config
+                                            .columns
+                                            .nodes_hidden
+                                            .iter()
+                                            .map(|s| toml::Value::String(s.clone()))
+                                            .collect();
+                                        columns.insert(
+                                            "nodes_hidden".to_string(),
+                                            toml::Value::Array(hidden_array),
+                                        );
+                                    }
+                                    Tab::Partitions => {
+                                        let hidden_array: Vec<toml::Value> = self
+                                            .config
+                                            .columns
+                                            .partitions_hidden
+                                            .iter()
+                                            .map(|s| toml::Value::String(s.clone()))
+                                            .collect();
+                                        columns.insert(
+                                            "partitions_hidden".to_string(),
+                                            toml::Value::Array(hidden_array),
+                                        );
+                                    }
+                                    Tab::History | Tab::Health => {}
+                                }
+                                if !columns.is_empty() {
+                                    update
+                                        .insert("columns".to_string(), toml::Value::Table(columns));
+                                    self.persist_config_async(update);
+                                }
                             }
                             return true;
                         }
@@ -1163,7 +1247,7 @@ impl App {
             _ => {
                 // Delegate unhandled keys to the active view
                 let key_event = crossterm::event::KeyEvent::new(key, modifiers);
-                match self.tab {
+                let handled = match self.tab {
                     Tab::Jobs => self.jobs_view.handle_key(key_event),
                     Tab::Nodes => self.nodes_view.handle_key(key_event),
                     Tab::History => {
@@ -1186,7 +1270,26 @@ impl App {
                         }
                     }
                     Tab::Health => false, // No view-level keys yet
+                };
+
+                // Check for and persist pending config updates
+                if handled {
+                    match self.tab {
+                        Tab::Jobs => {
+                            if let Some(update) = self.jobs_view.take_pending_config_update() {
+                                self.persist_config_async(update);
+                            }
+                        }
+                        Tab::Nodes => {
+                            if let Some(update) = self.nodes_view.take_pending_config_update() {
+                                self.persist_config_async(update);
+                            }
+                        }
+                        _ => {}
+                    }
                 }
+
+                handled
             }
         }
     }
@@ -1233,7 +1336,9 @@ impl App {
     }
 
     /// Persist theme and interval (spawns a thread).
-    fn persist_theme_interval_async(&self) {
+    /// Used by Settings UI for theme/interval changes.
+    #[allow(dead_code)]
+    pub fn persist_theme_interval_async(&self) {
         let path = self.config_path.clone();
         let theme = self.config.theme.clone();
         let interval = self.config.interval.jobs;
@@ -1891,5 +1996,271 @@ mod modal_tests {
 
         // Test update_content exists (can't test without mut)
         // The method is wired in request_refresh when is_following() is true
+    }
+
+    #[test]
+    fn test_jobs_sort_persists_to_config() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+
+        // Create initial config
+        let config = Config::default();
+        crate::config::save(&config_path, &config.theme, config.interval.jobs).unwrap();
+
+        let mut view = JobsView::from_config(&config);
+
+        // Toggle sort
+        view.toggle_sort("state");
+
+        // Check pending update exists
+        let update = view.take_pending_config_update();
+        assert!(update.is_some());
+
+        // Simulate App persisting it
+        let update = update.unwrap();
+        crate::config::update(&config_path, &update).unwrap();
+
+        // Reload config and verify
+        let reloaded = crate::config::load(&config_path);
+        assert_eq!(reloaded.view_state.jobs_sort_col, "state");
+        assert!(!reloaded.view_state.jobs_sort_reversed);
+
+        // Toggle again (reverse)
+        view.toggle_sort("state");
+        let update = view.take_pending_config_update().unwrap();
+        crate::config::update(&config_path, &update).unwrap();
+
+        let reloaded = crate::config::load(&config_path);
+        assert_eq!(reloaded.view_state.jobs_sort_col, "state");
+        assert!(reloaded.view_state.jobs_sort_reversed);
+    }
+
+    #[test]
+    fn test_jobs_column_reorder_persists_to_config() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+
+        let config = Config::default();
+        let mut temp_config = config.clone();
+        temp_config.columns.jobs_order = vec!["JOBID".into(), "STATE".into(), "NAME".into()];
+        crate::config::save(&config_path, &temp_config.theme, temp_config.interval.jobs).unwrap();
+
+        let mut view = JobsView::from_config(&temp_config);
+
+        // Need to build columns first so we have something to reorder
+        view.column_widths.insert("JOBID".to_string(), 10);
+        view.column_widths.insert("STATE".to_string(), 10);
+        view.column_widths.insert("NAME".to_string(), 10);
+
+        // Shift first column right
+        view.reorder_target_idx = 0;
+        view.shift_column_right();
+
+        // Check pending update
+        if let Some(update) = view.take_pending_config_update() {
+            crate::config::update(&config_path, &update).unwrap();
+
+            let reloaded = crate::config::load(&config_path);
+            // After shifting JOBID right, order should be [STATE, JOBID, NAME]
+            assert_eq!(reloaded.columns.jobs_order[0], "STATE");
+            assert_eq!(reloaded.columns.jobs_order[1], "JOBID");
+        }
+    }
+
+    #[test]
+    fn test_nodes_sort_persists_to_config() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+
+        let config = Config::default();
+        crate::config::save(&config_path, &config.theme, config.interval.jobs).unwrap();
+
+        let mut view = NodesView::new(&config);
+
+        // Set sort
+        view.set_sort("cpu");
+
+        // Check pending update
+        let update = view.take_pending_config_update();
+        assert!(update.is_some());
+
+        let update = update.unwrap();
+        crate::config::update(&config_path, &update).unwrap();
+
+        // Reload and verify
+        let reloaded = crate::config::load(&config_path);
+        assert_eq!(reloaded.view_state.nodes_sort_col, "cpu");
+        assert!(!reloaded.view_state.nodes_sort_reversed);
+    }
+
+    #[test]
+    fn test_column_hidden_preserved_in_config() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+
+        let mut config = Config::default();
+        crate::config::save(&config_path, &config.theme, config.interval.jobs).unwrap();
+
+        // Simulate hiding a column via the modal
+        config.columns.jobs_hidden = vec!["PARTITION".to_string()];
+
+        // Create update and persist
+        let mut update = std::collections::HashMap::new();
+        let mut columns = toml::Table::new();
+        let hidden_array: Vec<toml::Value> = config
+            .columns
+            .jobs_hidden
+            .iter()
+            .map(|s| toml::Value::String(s.clone()))
+            .collect();
+        columns.insert("jobs_hidden".to_string(), toml::Value::Array(hidden_array));
+        update.insert("columns".to_string(), toml::Value::Table(columns));
+
+        crate::config::update(&config_path, &update).unwrap();
+
+        // Reload and verify
+        let reloaded = crate::config::load(&config_path);
+        assert_eq!(reloaded.columns.jobs_hidden, vec!["PARTITION"]);
+    }
+
+    #[test]
+    fn test_config_preserves_user_comments() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+
+        // Write config with user comment
+        fs::write(
+            &config_path,
+            r#"
+# User's important comment
+[view_state]
+jobs_sort_col = ""
+
+[columns]
+jobs_order = []
+"#,
+        )
+        .unwrap();
+
+        // Make a change via update
+        let mut update = std::collections::HashMap::new();
+        let mut view_state = toml::Table::new();
+        view_state.insert(
+            "jobs_sort_col".to_string(),
+            toml::Value::String("state".to_string()),
+        );
+        update.insert("view_state".to_string(), toml::Value::Table(view_state));
+
+        crate::config::update(&config_path, &update).unwrap();
+
+        // Read file and verify comment is preserved
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(
+            content.contains("User's important comment"),
+            "User comment should be preserved"
+        );
+        assert!(
+            content.contains("jobs_sort_col = \"state\""),
+            "Updated value should be present"
+        );
+    }
+
+    #[test]
+    fn test_config_preserves_unknown_keys() {
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("config.toml");
+
+        // Write config with unknown key
+        fs::write(
+            &config_path,
+            r#"
+[view_state]
+jobs_sort_col = ""
+unknown_future_key = "value"
+
+[columns]
+jobs_order = []
+"#,
+        )
+        .unwrap();
+
+        // Make a change
+        let mut update = std::collections::HashMap::new();
+        let mut view_state = toml::Table::new();
+        view_state.insert(
+            "jobs_sort_col".to_string(),
+            toml::Value::String("time".to_string()),
+        );
+        update.insert("view_state".to_string(), toml::Value::Table(view_state));
+
+        crate::config::update(&config_path, &update).unwrap();
+
+        // Verify unknown key is preserved
+        let content = fs::read_to_string(&config_path).unwrap();
+        assert!(
+            content.contains("unknown_future_key"),
+            "Unknown keys should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_persist_to_unwritable_path_does_not_panic() {
+        // Create a read-only directory
+        use std::fs;
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let readonly_dir = temp_dir.path().join("readonly");
+        fs::create_dir(&readonly_dir).unwrap();
+
+        let config_path = readonly_dir.join("config.toml");
+
+        // On Unix, make directory read-only
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&readonly_dir).unwrap().permissions();
+            perms.set_mode(0o444);
+            fs::set_permissions(&readonly_dir, perms).unwrap();
+        }
+
+        // Attempt to update should not panic (just return error)
+        let mut update = std::collections::HashMap::new();
+        let mut view_state = toml::Table::new();
+        view_state.insert(
+            "jobs_sort_col".to_string(),
+            toml::Value::String("state".to_string()),
+        );
+        update.insert("view_state".to_string(), toml::Value::Table(view_state));
+
+        // This should not panic
+        let result = crate::config::update(&config_path, &update);
+        assert!(
+            result.is_err(),
+            "Update to readonly path should fail gracefully"
+        );
+
+        // Clean up permissions on Unix so temp_dir can be deleted
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&readonly_dir).unwrap().permissions();
+            perms.set_mode(0o755);
+            let _ = fs::set_permissions(&readonly_dir, perms);
+        }
     }
 }

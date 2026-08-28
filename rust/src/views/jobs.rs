@@ -19,6 +19,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table};
 use std::collections::HashMap;
 use std::sync::LazyLock;
+use toml;
 
 /// State priority order for default sorting.
 /// Lower number = higher priority.
@@ -71,6 +72,8 @@ pub struct JobsView {
     pub last_jobs: Vec<Job>,
     /// Last unfiltered jobs (raw from app)
     pub last_jobs_raw: Vec<Job>,
+    /// Pending config update to persist (set by view actions, consumed by app)
+    pending_config_update: Option<HashMap<String, toml::Value>>,
 }
 
 impl Default for JobsView {
@@ -95,6 +98,7 @@ impl JobsView {
             visual_selection: crate::views::visual::VisualSelection::new(),
             last_jobs: Vec::new(),
             last_jobs_raw: Vec::new(),
+            pending_config_update: None,
         }
     }
 
@@ -112,6 +116,11 @@ impl JobsView {
         }
 
         view
+    }
+
+    /// Take pending config update (returns and clears it).
+    pub fn take_pending_config_update(&mut self) -> Option<HashMap<String, toml::Value>> {
+        self.pending_config_update.take()
     }
 
     /// Toggle the "mine" filter.
@@ -138,12 +147,38 @@ impl JobsView {
             self.sort_col = Some(column.to_string());
             self.sort_reversed = false;
         }
+        // Persist sort state
+        let mut view_state = toml::Table::new();
+        view_state.insert(
+            "jobs_sort_col".to_string(),
+            toml::Value::String(self.sort_col.clone().unwrap_or_default()),
+        );
+        view_state.insert(
+            "jobs_sort_reversed".to_string(),
+            toml::Value::Boolean(self.sort_reversed),
+        );
+        let mut update = HashMap::new();
+        update.insert("view_state".to_string(), toml::Value::Table(view_state));
+        self.pending_config_update = Some(update);
     }
 
     /// Clear sort (revert to default state-priority sort).
     pub fn clear_sort(&mut self) {
         self.sort_col = None;
         self.sort_reversed = false;
+        // Persist cleared sort state
+        let mut view_state = toml::Table::new();
+        view_state.insert(
+            "jobs_sort_col".to_string(),
+            toml::Value::String(String::new()),
+        );
+        view_state.insert(
+            "jobs_sort_reversed".to_string(),
+            toml::Value::Boolean(false),
+        );
+        let mut update = HashMap::new();
+        update.insert("view_state".to_string(), toml::Value::Table(view_state));
+        self.pending_config_update = Some(update);
     }
     /// Cycle the reorder target to the next visible column (wraps).
     pub fn cycle_reorder_target(&mut self) {
@@ -185,6 +220,17 @@ impl JobsView {
                 if self.reorder_target_idx > 0 {
                     self.reorder_target_idx -= 1;
                 }
+                // Persist column order
+                let mut columns = toml::Table::new();
+                let order_array: Vec<toml::Value> = self
+                    .column_order
+                    .iter()
+                    .map(|s| toml::Value::String(s.clone()))
+                    .collect();
+                columns.insert("jobs_order".to_string(), toml::Value::Array(order_array));
+                let mut update = HashMap::new();
+                update.insert("columns".to_string(), toml::Value::Table(columns));
+                self.pending_config_update = Some(update);
             }
         }
     }
@@ -209,6 +255,17 @@ impl JobsView {
                 self.column_order = move_in_order(&self.column_order, target_name, before);
                 // Clamp target index
                 self.reorder_target_idx = (self.reorder_target_idx + 1).min(visible.len() - 1);
+                // Persist column order
+                let mut columns = toml::Table::new();
+                let order_array: Vec<toml::Value> = self
+                    .column_order
+                    .iter()
+                    .map(|s| toml::Value::String(s.clone()))
+                    .collect();
+                columns.insert("jobs_order".to_string(), toml::Value::Array(order_array));
+                let mut update = HashMap::new();
+                update.insert("columns".to_string(), toml::Value::Table(columns));
+                self.pending_config_update = Some(update);
             }
         }
     }
