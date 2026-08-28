@@ -197,6 +197,8 @@ pub struct App {
     last_refresh: Option<Instant>,
     pending_action: Option<PendingAction>,
     /// Last rendered table area for Jobs view (for mouse hit testing)
+    /// Auto-refresh is paused (Python: `_paused`).
+    paused: bool,
     pub last_jobs_table_area: Option<ratatui::layout::Rect>,
     /// Last rendered table area for Nodes view (for mouse hit testing)
     pub last_nodes_table_area: Option<ratatui::layout::Rect>,
@@ -248,6 +250,7 @@ impl App {
             request_tx,
             last_refresh: None,
             pending_action: None,
+            paused: false,
             last_jobs_table_area: None,
             last_nodes_table_area: None,
         }
@@ -1331,9 +1334,15 @@ impl App {
                 self.last_refresh = None;
                 true
             }
-            // Refresh
+            // Refresh. Python's `refresh_data` returns early while paused,
+            // so a manual refresh is a no-op until the user unpauses.
             (KeyCode::Char('r'), KeyModifiers::NONE) => {
                 self.last_refresh = None;
+                true
+            }
+            // Pause / resume auto-refresh
+            (KeyCode::Char('P'), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+                self.toggle_pause();
                 true
             }
             // Column toggle
@@ -1731,10 +1740,25 @@ impl App {
 
     /// Check if it's time to refresh the current tab.
     pub fn should_refresh(&self) -> bool {
+        if self.paused {
+            return false;
+        }
         match self.last_refresh {
             None => true,
             Some(last) => last.elapsed() >= self.tab.interval(&self.config),
         }
+    }
+
+    /// Toggle the auto-refresh pause state (Python: `action_toggle_pause`).
+    ///
+    /// Manual refresh with `r` still works while paused.
+    pub fn toggle_pause(&mut self) {
+        self.paused = !self.paused;
+        if !self.paused {
+            // Python's `BaseDataTableView.resume` fetches immediately.
+            self.last_refresh = None;
+        }
+        self.status = Some(if self.paused { "Paused" } else { "Resumed" }.to_string());
     }
 
     /// Ask the worker to refresh the current tab and reset the interval clock.
@@ -1971,6 +1995,45 @@ fn render_modal(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_toggle_pause_blocks_auto_refresh() {
+        let mut app = App::new(
+            Config::default(),
+            std::path::PathBuf::from("/tmp/test_config.toml"),
+        );
+        app.last_refresh = None;
+        assert!(app.should_refresh());
+
+        app.handle_key(KeyCode::Char('P'), KeyModifiers::NONE);
+        assert!(!app.should_refresh(), "paused app must not auto-refresh");
+        assert_eq!(app.status.as_deref(), Some("Paused"));
+    }
+
+    #[test]
+    fn test_resume_refreshes_immediately() {
+        let mut app = App::new(
+            Config::default(),
+            std::path::PathBuf::from("/tmp/test_config.toml"),
+        );
+        app.handle_key(KeyCode::Char('P'), KeyModifiers::NONE);
+        app.last_refresh = Some(std::time::Instant::now());
+
+        app.handle_key(KeyCode::Char('P'), KeyModifiers::NONE);
+        assert!(app.should_refresh(), "resume must fetch immediately");
+        assert_eq!(app.status.as_deref(), Some("Resumed"));
+    }
+
+    #[test]
+    fn test_manual_refresh_is_noop_while_paused() {
+        let mut app = App::new(
+            Config::default(),
+            std::path::PathBuf::from("/tmp/test_config.toml"),
+        );
+        app.handle_key(KeyCode::Char('P'), KeyModifiers::NONE);
+        app.handle_key(KeyCode::Char('r'), KeyModifiers::NONE);
+        assert!(!app.should_refresh());
+    }
 
     #[test]
     fn tab_titles() {
