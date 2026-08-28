@@ -80,6 +80,11 @@ pub struct JobsView {
     pub column_order: Vec<String>,
     /// Current column widths
     pub column_widths: HashMap<String, u16>,
+    /// Visible columns in render order, as allocated for the current width.
+    ///
+    /// `column_widths` is a lookup table and has no order; this is the single
+    /// source of truth for what is drawn, and in what sequence.
+    visible_cols: Vec<String>,
     /// Reorder target column index (in visible-column space)
     pub reorder_target_idx: usize,
     /// Mouse drag: column being dragged (visible-space index)
@@ -123,6 +128,7 @@ impl JobsView {
             sort_reversed: false,
             column_order: Vec::new(),
             column_widths: HashMap::new(),
+            visible_cols: Vec::new(),
             reorder_target_idx: 0,
             drag_col_index: None,
             drag_press_x: 0,
@@ -354,7 +360,7 @@ impl JobsView {
     }
     /// Cycle the reorder target to the next visible column (wraps).
     pub fn cycle_reorder_target(&mut self) {
-        let visible_count = self.column_widths.len();
+        let visible_count = self.visible_cols.len();
         if visible_count > 0 {
             self.reorder_target_idx = (self.reorder_target_idx + 1) % visible_count;
         }
@@ -362,12 +368,7 @@ impl JobsView {
 
     /// Get the list of currently visible column names (in order).
     fn visible_column_names(&self) -> Vec<String> {
-        // Return columns in the order they appear in column_order, filtered by visibility
-        self.column_order
-            .iter()
-            .filter(|name| self.column_widths.contains_key(*name))
-            .cloned()
-            .collect()
+        self.visible_cols.clone()
     }
 
     /// Shift the targeted column left in the absolute column_order.
@@ -388,6 +389,7 @@ impl JobsView {
                 // Move before the predecessor
                 let before = self.column_order.get(idx - 1).map(|s| s.as_str());
                 self.column_order = move_in_order(&self.column_order, target_name, before);
+                self.sync_visible_to_order();
                 // Clamp target index
                 if self.reorder_target_idx > 0 {
                     self.reorder_target_idx -= 1;
@@ -405,6 +407,29 @@ impl JobsView {
                 self.pending_config_update = Some(update);
             }
         }
+    }
+
+    /// Re-sequence `visible_cols` to follow `column_order` after a reorder.
+    ///
+    /// Keeps the rendered order correct before the next `rebuild_columns`,
+    /// so a reorder is visible immediately and drag hit-testing stays honest.
+    fn sync_visible_to_order(&mut self) {
+        if self.visible_cols.is_empty() {
+            return;
+        }
+        let visible: std::collections::HashSet<&String> = self.visible_cols.iter().collect();
+        let mut next: Vec<String> = self
+            .column_order
+            .iter()
+            .filter(|n| visible.contains(*n))
+            .cloned()
+            .collect();
+        for name in &self.visible_cols {
+            if !next.contains(name) {
+                next.push(name.clone());
+            }
+        }
+        self.visible_cols = next;
     }
 
     /// Shift the targeted column right in the absolute column_order.
@@ -425,6 +450,7 @@ impl JobsView {
                 // Move before the item two positions ahead (or None for end)
                 let before = self.column_order.get(idx + 2).map(|s| s.as_str());
                 self.column_order = move_in_order(&self.column_order, target_name, before);
+                self.sync_visible_to_order();
                 // Clamp target index
                 self.reorder_target_idx = (self.reorder_target_idx + 1).min(visible.len() - 1);
                 // Persist column order
@@ -768,10 +794,12 @@ impl JobsView {
 
         // Build final widths: min(allocated, content_width)
         self.column_widths.clear();
+        self.visible_cols.clear();
         for (name, alloc_width) in allocated {
             let content_width = content_widths.get(&name).copied().unwrap_or(8);
             self.column_widths
-                .insert(name, alloc_width.min(content_width));
+                .insert(name.clone(), alloc_width.min(content_width));
+            self.visible_cols.push(name);
         }
     }
 
@@ -1145,7 +1173,7 @@ pub fn render(
 
     // Build header
     let mut header_cells = Vec::new();
-    let cols_to_render: Vec<String> = view.column_widths.keys().cloned().collect();
+    let cols_to_render: Vec<String> = view.visible_column_names();
 
     for (idx, col_name) in cols_to_render.iter().enumerate() {
         let style = if idx == view.reorder_target_idx {
@@ -1279,6 +1307,58 @@ fn truncate(s: &str, width: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Test helper: set the visible columns and their widths together, so a
+    /// test cannot accidentally describe a state the renderer cannot produce.
+    fn set_visible_for_test(view: &mut JobsView, cols: &[(&str, u16)]) {
+        view.column_widths.clear();
+        view.visible_cols.clear();
+        for (name, width) in cols {
+            view.column_widths.insert((*name).to_string(), *width);
+            view.visible_cols.push((*name).to_string());
+        }
+    }
+
+    #[test]
+    fn visible_columns_are_in_deterministic_default_order() {
+        let config = Config::default();
+        let mut a = JobsView::new();
+        let mut b = JobsView::new();
+        a.rebuild_columns(200, &config);
+        b.rebuild_columns(200, &config);
+
+        let names = a.visible_column_names();
+        assert_eq!(names, b.visible_column_names(), "order must be stable");
+        assert_eq!(
+            names.first().map(String::as_str),
+            Some("JOBID"),
+            "default order must start with JOBID like the Python COLUMNS list"
+        );
+        assert_eq!(names[1], "STATE");
+        assert_eq!(names[2], "NAME");
+    }
+
+    #[test]
+    fn visible_columns_follow_saved_order() {
+        let mut config = Config::default();
+        config.columns.jobs_order = vec!["NAME".into(), "JOBID".into()];
+        let mut view = JobsView::from_config(&config);
+        view.rebuild_columns(200, &config);
+        let names = view.visible_column_names();
+        assert_eq!(names[0], "NAME");
+        assert_eq!(names[1], "JOBID");
+    }
+
+    #[test]
+    fn drag_columns_available_without_saved_order() {
+        let config = Config::default();
+        let mut view = JobsView::new();
+        view.rebuild_columns(200, &config);
+        assert!(
+            !view.current_cols_for_drag().is_empty(),
+            "drag hit-testing must work with a default (empty) saved order"
+        );
+    }
 
     #[allow(clippy::too_many_arguments)]
     fn make_job(
@@ -1854,9 +1934,7 @@ mod tests {
     #[test]
     fn test_cycle_reorder_target_wraps() {
         let mut view = JobsView::new();
-        view.column_widths.insert("A".to_string(), 10);
-        view.column_widths.insert("B".to_string(), 10);
-        view.column_widths.insert("C".to_string(), 10);
+        set_visible_for_test(&mut view, &[("A", 10), ("B", 10), ("C", 10)]);
 
         assert_eq!(view.reorder_target_idx, 0);
         view.cycle_reorder_target();
@@ -1882,9 +1960,7 @@ mod tests {
     fn test_shift_column_right_and_left() {
         let mut view = JobsView::new();
         view.column_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
-        view.column_widths.insert("A".to_string(), 10);
-        view.column_widths.insert("B".to_string(), 10);
-        view.column_widths.insert("C".to_string(), 10);
+        set_visible_for_test(&mut view, &[("A", 10), ("B", 10), ("C", 10)]);
 
         // Target first column (A) at idx 0
         view.reorder_target_idx = 0;
@@ -1910,9 +1986,7 @@ mod tests {
     fn test_shift_at_edges_clamps() {
         let mut view = JobsView::new();
         view.column_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
-        view.column_widths.insert("A".to_string(), 10);
-        view.column_widths.insert("B".to_string(), 10);
-        view.column_widths.insert("C".to_string(), 10);
+        set_visible_for_test(&mut view, &[("A", 10), ("B", 10), ("C", 10)]);
 
         // Target first column
         view.reorder_target_idx = 0;
@@ -1942,10 +2016,8 @@ mod tests {
         // Set up column order with A, B, C
         view.column_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
 
-        // Only A and C are visible (B is hidden by having no width)
-        view.column_widths.insert("A".to_string(), 10);
-        view.column_widths.insert("C".to_string(), 10);
-        // B has no width (hidden)
+        // Only A and C are visible; B is hidden by the column-toggle config.
+        set_visible_for_test(&mut view, &[("A", 10), ("C", 10)]);
 
         // Reorder target is in visible-space: idx 0 = A, idx 1 = C
         view.reorder_target_idx = 0;
@@ -1963,8 +2035,7 @@ mod tests {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
         let mut view = JobsView::new();
-        view.column_widths.insert("A".to_string(), 10);
-        view.column_widths.insert("B".to_string(), 10);
+        set_visible_for_test(&mut view, &[("A", 10), ("B", 10)]);
 
         // Test '.' key
         let key = KeyEvent::new(KeyCode::Char('.'), KeyModifiers::NONE);
@@ -1988,9 +2059,7 @@ mod tests {
         // Press and release at same position -> no reorder
         let mut view = JobsView::new();
         view.column_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
-        view.column_widths.insert("A".to_string(), 10);
-        view.column_widths.insert("B".to_string(), 10);
-        view.column_widths.insert("C".to_string(), 10);
+        set_visible_for_test(&mut view, &[("A", 10), ("B", 10), ("C", 10)]);
 
         let area = ratatui::layout::Rect {
             x: 0,
@@ -2014,9 +2083,7 @@ mod tests {
         // Drag from col 0 to boundary 2 -> reorder
         let mut view = JobsView::new();
         view.column_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
-        view.column_widths.insert("A".to_string(), 10);
-        view.column_widths.insert("B".to_string(), 10);
-        view.column_widths.insert("C".to_string(), 10);
+        set_visible_for_test(&mut view, &[("A", 10), ("B", 10), ("C", 10)]);
 
         let area = ratatui::layout::Rect {
             x: 0,
@@ -2046,9 +2113,7 @@ mod tests {
         // Escape during drag -> cancel, no reorder
         let mut view = JobsView::new();
         view.column_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
-        view.column_widths.insert("A".to_string(), 10);
-        view.column_widths.insert("B".to_string(), 10);
-        view.column_widths.insert("C".to_string(), 10);
+        set_visible_for_test(&mut view, &[("A", 10), ("B", 10), ("C", 10)]);
 
         let area = ratatui::layout::Rect {
             x: 0,
@@ -2079,9 +2144,7 @@ mod tests {
         // Drag beyond rightmost -> clamp to end
         let mut view = JobsView::new();
         view.column_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
-        view.column_widths.insert("A".to_string(), 10);
-        view.column_widths.insert("B".to_string(), 10);
-        view.column_widths.insert("C".to_string(), 10);
+        set_visible_for_test(&mut view, &[("A", 10), ("B", 10), ("C", 10)]);
 
         let area = ratatui::layout::Rect {
             x: 0,
@@ -2108,9 +2171,7 @@ mod tests {
         // Drag before leftmost -> clamp to start
         let mut view = JobsView::new();
         view.column_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
-        view.column_widths.insert("A".to_string(), 10);
-        view.column_widths.insert("B".to_string(), 10);
-        view.column_widths.insert("C".to_string(), 10);
+        set_visible_for_test(&mut view, &[("A", 10), ("B", 10), ("C", 10)]);
 
         let area = ratatui::layout::Rect {
             x: 0,
@@ -2173,9 +2234,7 @@ mod tests {
             "D".to_string(),
             "E".to_string(),
         ];
-        view.column_widths.insert("A".to_string(), 40);
-        view.column_widths.insert("B".to_string(), 40);
-        view.column_widths.insert("C".to_string(), 40);
+        set_visible_for_test(&mut view, &[("A", 40), ("B", 40), ("C", 40)]);
         view.column_widths.insert("D".to_string(), 40);
         view.column_widths.insert("E".to_string(), 40);
 
