@@ -259,8 +259,34 @@ impl App {
         while let Ok(msg) = self.refresh_rx.try_recv() {
             match msg {
                 Msg::Jobs(jobs) => {
+                    // Check watched jobs for changes before updating
+                    let notifications = self.jobs_view.check_watched_jobs(&jobs);
                     self.jobs = jobs;
-                    self.status = None;
+
+                    // Process watch notifications
+                    for (_job_id, message) in &notifications {
+                        // Ring the bell (skip in tests to avoid corrupting output)
+                        #[cfg(not(test))]
+                        {
+                            use std::io::Write;
+                            let _ = std::io::stdout().write_all(b"");
+                            let _ = std::io::stdout().flush();
+                        }
+
+                        // Emit desktop notification if enabled
+                        if self.config.notifications.desktop_enabled {
+                            crate::views::modals::notify::desktop_notify(
+                                "sqtop: Job finished",
+                                message,
+                            );
+                        }
+                        // Set status message (last one wins, which is fine for multiple)
+                        self.status = Some(message.clone());
+                    }
+
+                    if notifications.is_empty() {
+                        self.status = None;
+                    }
                 }
                 Msg::Nodes(nodes) => {
                     self.nodes = nodes;
@@ -1414,6 +1440,73 @@ impl App {
             (KeyCode::Char('i'), KeyModifiers::NONE) if self.tab == Tab::Jobs => {
                 if let Some(job) = self.current_job() {
                     self.open_job_info(job.job_id.clone());
+                }
+                true
+            }
+            // Jobs tab: d for detail
+            (KeyCode::Char('d'), KeyModifiers::NONE) if self.tab == Tab::Jobs => {
+                if let Some(job) = self.current_job() {
+                    self.open_job_detail(job.job_id.clone());
+                }
+                true
+            }
+            // Jobs tab: l for log viewer
+            (KeyCode::Char('l'), KeyModifiers::NONE) if self.tab == Tab::Jobs => {
+                if let Some(job) = self.current_job() {
+                    self.open_log_viewer(job.job_id.clone(), true);
+                }
+                true
+            }
+            // Jobs tab: a for array tasks
+            (KeyCode::Char('a'), KeyModifiers::NONE) if self.tab == Tab::Jobs => {
+                if let Some(job) = self.current_job() {
+                    self.open_array_tasks(job.job_id.clone());
+                }
+                true
+            }
+            // Jobs tab: D for dependencies
+            (KeyCode::Char('D'), KeyModifiers::NONE) if self.tab == Tab::Jobs => {
+                if let Some(job) = self.current_job() {
+                    self.open_dependencies(job.job_id.clone());
+                }
+                true
+            }
+            // Jobs tab: w for watch
+            (KeyCode::Char('w'), KeyModifiers::NONE) if self.tab == Tab::Jobs => {
+                if let Some(job) = self.current_job() {
+                    let job_id = job.job_id.clone();
+                    let job_name = job.name.clone();
+                    let job_state = job.state.clone();
+                    let watched = self.jobs_view.toggle_watch(&job_id, &job_state);
+                    if watched {
+                        self.status = Some(format!("Watching job {} ({})", job_id, job_name));
+                    } else {
+                        self.status = Some(format!("Unwatched job {}", job_id));
+                    }
+                }
+                true
+            }
+            // Jobs tab: h for hold
+            (KeyCode::Char('h'), KeyModifiers::NONE) if self.tab == Tab::Jobs => {
+                let job_ids = self.jobs_view.selected_or_current_job_ids();
+                if !job_ids.is_empty() {
+                    self.handle_bulk_action("hold", job_ids);
+                }
+                true
+            }
+            // Jobs tab: R for release
+            (KeyCode::Char('R'), KeyModifiers::NONE) if self.tab == Tab::Jobs => {
+                let job_ids = self.jobs_view.selected_or_current_job_ids();
+                if !job_ids.is_empty() {
+                    self.handle_bulk_action("release", job_ids);
+                }
+                true
+            }
+            // Jobs tab: e for requeue
+            (KeyCode::Char('e'), KeyModifiers::NONE) if self.tab == Tab::Jobs => {
+                let job_ids = self.jobs_view.selected_or_current_job_ids();
+                if !job_ids.is_empty() {
+                    self.handle_bulk_action("requeue", job_ids);
                 }
                 true
             }

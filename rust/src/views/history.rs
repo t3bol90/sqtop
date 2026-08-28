@@ -55,6 +55,8 @@ pub struct HistoryView {
     pub rebuild_cache_names: Vec<String>,
     /// Table cursor state
     pub table_state: CyclicTableState,
+    /// Visual selection state
+    pub visual_selection: crate::views::visual::VisualSelection,
     /// Last filtered jobs (for row lookups)
     pub last_jobs: Vec<SacctJob>,
     /// Last unfiltered jobs (raw from app)
@@ -78,6 +80,7 @@ impl HistoryView {
             rebuild_cache_width: 0,
             rebuild_cache_names: Vec::new(),
             table_state: CyclicTableState::new(),
+            visual_selection: crate::views::visual::VisualSelection::new(),
             last_jobs: Vec::new(),
             last_jobs_raw: Vec::new(),
             hours: 24,
@@ -216,6 +219,36 @@ impl HistoryView {
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent, current_user: &str) -> bool {
         use crossterm::event::{KeyCode, KeyModifiers};
 
+        // Visual mode keys
+        if self.visual_selection.is_active() {
+            match (key.code, key.modifiers) {
+                (KeyCode::Esc, KeyModifiers::NONE) => {
+                    self.visual_selection.exit();
+                    return true;
+                }
+                (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
+                    let cursor_row = self.table_state.selected().unwrap_or(0);
+                    self.visual_selection
+                        .move_cursor(1, self.last_jobs.len(), cursor_row);
+                    if let Some(vc) = self.visual_selection.cursor() {
+                        self.table_state.select(Some(vc));
+                    }
+                    return true;
+                }
+                (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
+                    let cursor_row = self.table_state.selected().unwrap_or(0);
+                    self.visual_selection
+                        .move_cursor(-1, self.last_jobs.len(), cursor_row);
+                    if let Some(vc) = self.visual_selection.cursor() {
+                        self.table_state.select(Some(vc));
+                    }
+                    return true;
+                }
+                _ => {}
+            }
+        }
+
+        // Normal mode keys
         match (key.code, key.modifiers) {
             (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
                 self.table_state.next();
@@ -225,9 +258,25 @@ impl HistoryView {
                 self.table_state.prev();
                 true
             }
-            (KeyCode::Char('m'), KeyModifiers::NONE) => {
+            (KeyCode::Char('u'), KeyModifiers::NONE) => {
                 self.toggle_mine(current_user);
                 true
+            }
+            (KeyCode::Char('v') | KeyCode::Char('V'), KeyModifiers::NONE) => {
+                // Enter visual mode at current cursor
+                if let Some(cursor_row) = self.table_state.selected() {
+                    self.visual_selection.enter(cursor_row);
+                }
+                true
+            }
+            (KeyCode::Esc, KeyModifiers::NONE) => {
+                // Exit visual mode or dismiss (handled at app level for dismiss)
+                if self.visual_selection.is_active() {
+                    self.visual_selection.exit();
+                    true
+                } else {
+                    false
+                }
             }
             _ => false,
         }
@@ -488,5 +537,106 @@ mod tests {
 
         // Change on different width
         assert!(view.rebuild_columns(120, false));
+    }
+
+    #[test]
+    fn test_history_u_key_toggle_mine() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut view = HistoryView::new();
+        let jobs = vec![
+            make_job("1", "COMPLETED", "alice"),
+            make_job("2", "FAILED", "bob"),
+        ];
+        view.update(jobs, "alice");
+
+        // 'u' key should toggle mine filter
+        let key = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE);
+        let handled = view.handle_key(key, "alice");
+        assert!(handled);
+        assert!(view.filter_mine);
+        assert_eq!(view.last_jobs.len(), 1);
+
+        // 'm' key should NOT toggle mine filter
+        view.filter_mine = false;
+        view.update(view.last_jobs_raw.clone(), "alice");
+        let key = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE);
+        let handled = view.handle_key(key, "alice");
+        assert!(!handled);
+        assert!(!view.filter_mine);
+    }
+
+    #[test]
+    fn test_history_visual_enter() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut view = HistoryView::new();
+        let jobs = vec![
+            make_job("1", "COMPLETED", "alice"),
+            make_job("2", "FAILED", "alice"),
+        ];
+        view.update(jobs, "alice");
+        view.table_state.select(Some(0));
+
+        // 'v' key should enter visual mode
+        let key = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE);
+        let handled = view.handle_key(key, "alice");
+        assert!(handled);
+        assert!(view.visual_selection.is_active());
+
+        // 'V' key should also work
+        view.visual_selection.exit();
+        let key = KeyEvent::new(KeyCode::Char('V'), KeyModifiers::NONE);
+        let handled = view.handle_key(key, "alice");
+        assert!(handled);
+        assert!(view.visual_selection.is_active());
+    }
+
+    #[test]
+    fn test_history_visual_exit() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut view = HistoryView::new();
+        let jobs = vec![make_job("1", "COMPLETED", "alice")];
+        view.update(jobs, "alice");
+        view.table_state.select(Some(0));
+
+        // Enter visual mode
+        view.visual_selection.enter(0);
+        assert!(view.visual_selection.is_active());
+
+        // Escape should exit visual mode
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        let handled = view.handle_key(key, "alice");
+        assert!(handled);
+        assert!(!view.visual_selection.is_active());
+    }
+
+    #[test]
+    fn test_history_visual_navigation() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut view = HistoryView::new();
+        let jobs = vec![
+            make_job("1", "COMPLETED", "alice"),
+            make_job("2", "FAILED", "alice"),
+            make_job("3", "COMPLETED", "alice"),
+        ];
+        view.update(jobs, "alice");
+        view.table_state.select(Some(0));
+        view.visual_selection.enter(0);
+
+        // 'j' should move cursor down in visual mode
+        let key = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        let handled = view.handle_key(key, "alice");
+        assert!(handled);
+        assert!(view.visual_selection.is_active());
+        assert_eq!(view.table_state.selected(), Some(1));
+
+        // 'k' should move cursor up in visual mode
+        let key = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE);
+        let handled = view.handle_key(key, "alice");
+        assert!(handled);
+        assert_eq!(view.table_state.selected(), Some(0));
     }
 }

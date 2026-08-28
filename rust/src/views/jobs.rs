@@ -45,6 +45,24 @@ static STATE_COLORS: LazyLock<HashMap<&str, Color>> = LazyLock::new(|| {
     m
 });
 
+/// Terminal states for the 'f' filter (show failed/problematic jobs).
+///
+/// This is intentionally broader than just "FAILED" - it includes all terminal
+/// states that indicate a job did not complete successfully.
+static FILTER_TERMINAL_STATES: LazyLock<std::collections::HashSet<&str>> = LazyLock::new(|| {
+    [
+        "FAILED",
+        "CANCELLED",
+        "TIMEOUT",
+        "NODE_FAIL",
+        "PREEMPTED",
+        "OUT_OF_MEMORY",
+    ]
+    .iter()
+    .copied()
+    .collect()
+});
+
 /// Jobs view state.
 #[derive(Debug, Clone)]
 pub struct JobsView {
@@ -76,6 +94,10 @@ pub struct JobsView {
     pub table_state: CyclicTableState,
     /// Visual selection state
     pub visual_selection: crate::views::visual::VisualSelection,
+    /// State filter ("", "RUNNING", "PENDING", "FAILED")
+    pub filter_state: String,
+    /// Watched jobs: job_id -> last known state
+    pub watched_states: std::collections::HashMap<String, String>,
     /// Last filtered/sorted jobs (for row lookups)
     pub last_jobs: Vec<Job>,
     /// Last unfiltered jobs (raw from app)
@@ -108,6 +130,8 @@ impl JobsView {
             dragging: false,
             table_state: CyclicTableState::new(),
             visual_selection: crate::views::visual::VisualSelection::new(),
+            filter_state: String::new(),
+            watched_states: std::collections::HashMap::new(),
             last_jobs: Vec::new(),
             last_jobs_raw: Vec::new(),
             pending_config_update: None,
@@ -138,6 +162,142 @@ impl JobsView {
     /// Toggle the "mine" filter.
     pub fn toggle_filter_mine(&mut self) {
         self.filter_mine = !self.filter_mine;
+    }
+
+    /// Cycle the state filter: "" -> "RUNNING" -> "PENDING" -> "FAILED" -> "".
+    pub fn cycle_state_filter(&mut self) {
+        const CYCLE: &[&str] = &["", "RUNNING", "PENDING", "FAILED"];
+        let current_idx = CYCLE
+            .iter()
+            .position(|s| *s == self.filter_state.as_str())
+            .unwrap_or(0);
+        self.filter_state = CYCLE[(current_idx + 1) % CYCLE.len()].to_string();
+    }
+
+    /// Toggle watch on a job.
+    ///
+    /// Returns (watched, job_state) where watched=true if now watching.
+    pub fn toggle_watch(&mut self, job_id: &str, job_state: &str) -> bool {
+        if self.watched_states.contains_key(job_id) {
+            self.watched_states.remove(job_id);
+            false // unwatched
+        } else {
+            self.watched_states
+                .insert(job_id.to_string(), job_state.to_string());
+            true // watched
+        }
+    }
+
+    /// Check watched jobs for state changes and notify when they finish.
+    ///
+    /// Returns notifications to emit (job_id, message).
+    pub fn check_watched_jobs(&mut self, fresh_jobs: &[Job]) -> Vec<(String, String)> {
+        if self.watched_states.is_empty() {
+            return Vec::new();
+        }
+
+        const TERMINAL_STATES: &[&str] = &[
+            "COMPLETED",
+            "FAILED",
+            "CANCELLED",
+            "TIMEOUT",
+            "NODE_FAIL",
+            "PREEMPTED",
+        ];
+
+        let job_map: std::collections::HashMap<&str, &str> = fresh_jobs
+            .iter()
+            .map(|j| (j.job_id.as_str(), j.state.as_str()))
+            .collect();
+
+        let mut notifications = Vec::new();
+        let mut finished = Vec::new();
+
+        for (job_id, last_state) in &self.watched_states {
+            if let Some(&current_state) = job_map.get(job_id.as_str()) {
+                if TERMINAL_STATES.contains(&current_state) {
+                    // Job reached terminal state
+                    notifications.push((
+                        job_id.clone(),
+                        format!("Job {} → {}", job_id, current_state),
+                    ));
+                    finished.push(job_id.clone());
+                } else if current_state != last_state {
+                    // State changed but not terminal - update and keep watching
+                    // Note: we'll update this after the loop
+                }
+            } else {
+                // Job disappeared from queue
+                notifications.push((job_id.clone(), format!("Job {} → gone from queue", job_id)));
+                finished.push(job_id.clone());
+            }
+        }
+
+        // Update non-terminal state changes
+        for (job_id, &current_state) in &job_map {
+            if let Some(last_state) = self.watched_states.get_mut(*job_id) {
+                if current_state != last_state.as_str() && !TERMINAL_STATES.contains(&current_state)
+                {
+                    *last_state = current_state.to_string();
+                }
+            }
+        }
+
+        // Remove finished jobs
+        for job_id in finished {
+            self.watched_states.remove(&job_id);
+        }
+
+        notifications
+    }
+
+    /// Get count of watched jobs.
+    pub fn watched_count(&self) -> usize {
+        self.watched_states.len()
+    }
+
+    /// Check if a job is watched.
+    pub fn is_watched(&self, job_id: &str) -> bool {
+        self.watched_states.contains_key(job_id)
+    }
+
+    /// Toggle selection on the current row.
+    ///
+    /// If visual mode is active and cursor is in the selection, exit visual mode.
+    /// Otherwise, enter visual mode at cursor (single-row selection).
+    pub fn toggle_select(&mut self) -> bool {
+        if let Some(row) = self.table_state.selected() {
+            if row < self.last_jobs.len() {
+                let rows = self.visual_selection.rows();
+                if rows.contains(&row) && self.visual_selection.is_active() {
+                    // Row is selected - deselect by exiting visual mode
+                    self.visual_selection.exit();
+                } else {
+                    // Enter visual mode at this row (single-row selection)
+                    self.visual_selection.enter(row);
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Select all visible jobs.
+    pub fn select_all_visible(&mut self) {
+        if self.last_jobs.is_empty() {
+            return;
+        }
+        // Enter visual mode at row 0, then extend to the end
+        self.visual_selection.enter(0);
+        if let Some(last) = self.last_jobs.len().checked_sub(1) {
+            self.visual_selection
+                .move_cursor(last as i64, self.last_jobs.len(), 0);
+        }
+    }
+
+    /// Clear selection.
+    pub fn clear_selection(&mut self) {
+        self.visual_selection.exit();
     }
 
     /// Set the search query.
@@ -463,6 +623,15 @@ impl JobsView {
             filtered.retain(|j| job_matches_search(j, &query));
         }
 
+        // Step 2.5: filter_state
+        if !self.filter_state.is_empty() {
+            if self.filter_state == "FAILED" {
+                filtered.retain(|j| FILTER_TERMINAL_STATES.contains(j.state.as_str()));
+            } else {
+                filtered.retain(|j| j.state == self.filter_state);
+            }
+        }
+
         // Step 3: sort
         if let Some(ref col) = self.sort_col {
             filtered.sort_by(|a, b| {
@@ -645,6 +814,28 @@ impl JobsView {
             .collect()
     }
 
+    /// Get selected or current job IDs.
+    ///
+    /// If there's a selection, return all selected job IDs (that are still visible).
+    /// Otherwise, return the job ID at the current cursor position.
+    pub fn selected_or_current_job_ids(&self) -> Vec<String> {
+        if self.visual_selection.is_active() {
+            let rows = self.visual_selection.rows();
+            rows.into_iter()
+                .filter(|&row| row < self.last_jobs.len())
+                .map(|row| self.last_jobs[row].job_id.clone())
+                .collect()
+        } else if let Some(row) = self.table_state.selected() {
+            if row < self.last_jobs.len() {
+                vec![self.last_jobs[row].job_id.clone()]
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Get selection count.
     pub fn selection_count(&self) -> usize {
         self.visual_selection.rows().len()
@@ -729,13 +920,29 @@ impl JobsView {
                 self.cursor_prev();
                 true
             }
-            (KeyCode::Char('m'), KeyModifiers::NONE) => {
+            (KeyCode::Char('u'), KeyModifiers::NONE) => {
                 self.toggle_filter_mine();
+                true
+            }
+            (KeyCode::Char('f'), KeyModifiers::NONE) => {
+                self.cycle_state_filter();
                 true
             }
             (KeyCode::Char('/'), KeyModifiers::NONE) => {
                 // Enter search input mode
                 self.search_input_active = true;
+                true
+            }
+            (KeyCode::Char(' '), KeyModifiers::NONE) => {
+                self.toggle_select();
+                true
+            }
+            (KeyCode::Char('*'), KeyModifiers::NONE) => {
+                self.select_all_visible();
+                true
+            }
+            (KeyCode::Char('x'), KeyModifiers::NONE) => {
+                self.clear_selection();
                 true
             }
             (KeyCode::Char('v') | KeyCode::Char('V'), KeyModifiers::NONE) => {
@@ -746,7 +953,15 @@ impl JobsView {
                 true
             }
             (KeyCode::Char('s'), KeyModifiers::NONE) => {
-                self.toggle_sort("state");
+                self.toggle_sort("STATE");
+                true
+            }
+            (KeyCode::Char('t'), KeyModifiers::NONE) => {
+                self.toggle_sort("TIME");
+                true
+            }
+            (KeyCode::Char('c'), KeyModifiers::NONE) => {
+                self.toggle_sort("CPUS");
                 true
             }
             (KeyCode::Char('S'), KeyModifiers::SHIFT) => {
@@ -953,7 +1168,14 @@ pub fn render(
         for col_name in &cols_to_render {
             let width = view.column_widths.get(col_name).copied().unwrap_or(8);
             let content = match col_name.as_str() {
-                "JOBID" => job.job_id.clone(),
+                "JOBID" => {
+                    let prefix = if view.is_watched(&job.job_id) {
+                        "★ "
+                    } else {
+                        ""
+                    };
+                    format!("{}{}", prefix, job.job_id)
+                }
                 "STATE" => job.state.clone(),
                 "NAME" => truncate(&job.name, width as usize),
                 "USER" => truncate(&job.user, width as usize),
@@ -1004,6 +1226,12 @@ pub fn render(
     }
     if !view.search_query.is_empty() {
         title_parts.push(format!("\"{}\"", view.search_query));
+    }
+    if !view.filter_state.is_empty() {
+        title_parts.push(view.filter_state.clone());
+    }
+    if view.watched_count() > 0 {
+        title_parts.push(format!("{} watched", view.watched_count()));
     }
     let title = title_parts.join(" · ");
 
@@ -1973,5 +2201,397 @@ mod tests {
         // The exact position depends on move_in_order logic, but B should not be at index 1 anymore
         let b_pos = view.column_order.iter().position(|s| s == "B");
         assert_ne!(b_pos, Some(1));
+    }
+
+    #[test]
+    fn test_cycle_state_filter() {
+        let mut view = JobsView::new();
+        assert_eq!(view.filter_state, "");
+
+        view.cycle_state_filter();
+        assert_eq!(view.filter_state, "RUNNING");
+
+        view.cycle_state_filter();
+        assert_eq!(view.filter_state, "PENDING");
+
+        view.cycle_state_filter();
+        assert_eq!(view.filter_state, "FAILED");
+
+        view.cycle_state_filter();
+        assert_eq!(view.filter_state, "");
+    }
+
+    #[test]
+    fn test_filter_state_running() {
+        let mut view = JobsView::new();
+        let jobs = vec![
+            make_job("1", "j1", "alice", "RUNNING", "p1", "", "", "normal"),
+            make_job("2", "j2", "alice", "PENDING", "p1", "", "", "normal"),
+            make_job("3", "j3", "alice", "RUNNING", "p1", "", "", "normal"),
+        ];
+
+        view.filter_state = "RUNNING".to_string();
+        let filtered = view.apply_filters(&jobs, "alice");
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0].job_id, "1");
+        assert_eq!(filtered[1].job_id, "3");
+    }
+
+    #[test]
+    fn test_filter_state_failed() {
+        let mut view = JobsView::new();
+        let jobs = vec![
+            make_job("1", "j1", "alice", "RUNNING", "p1", "", "", "normal"),
+            make_job("2", "j2", "alice", "FAILED", "p1", "", "", "normal"),
+            make_job("3", "j3", "alice", "CANCELLED", "p1", "", "", "normal"),
+            make_job("4", "j4", "alice", "TIMEOUT", "p1", "", "", "normal"),
+            make_job("5", "j5", "alice", "NODE_FAIL", "p1", "", "", "normal"),
+            make_job("6", "j6", "alice", "PREEMPTED", "p1", "", "", "normal"),
+            make_job("7", "j7", "alice", "OUT_OF_MEMORY", "p1", "", "", "normal"),
+            make_job("8", "j8", "alice", "COMPLETED", "p1", "", "", "normal"),
+        ];
+
+        view.filter_state = "FAILED".to_string();
+        let filtered = view.apply_filters(&jobs, "alice");
+        // FAILED filter matches the 6 terminal states
+        assert_eq!(filtered.len(), 6);
+        let states: Vec<&str> = filtered.iter().map(|j| j.state.as_str()).collect();
+        assert!(states.contains(&"FAILED"));
+        assert!(states.contains(&"CANCELLED"));
+        assert!(states.contains(&"TIMEOUT"));
+        assert!(states.contains(&"NODE_FAIL"));
+        assert!(states.contains(&"PREEMPTED"));
+        assert!(states.contains(&"OUT_OF_MEMORY"));
+        // These should NOT be in the filtered results
+        assert!(!states.contains(&"RUNNING"));
+        assert!(!states.contains(&"COMPLETED"));
+    }
+
+    #[test]
+    fn test_toggle_watch() {
+        let mut view = JobsView::new();
+
+        // Watch a job
+        let watched = view.toggle_watch("123", "PENDING");
+        assert!(watched);
+        assert!(view.watched_states.contains_key("123"));
+        assert_eq!(view.watched_states.get("123"), Some(&"PENDING".to_string()));
+
+        // Unwatch it
+        let watched = view.toggle_watch("123", "PENDING");
+        assert!(!watched);
+        assert!(!view.watched_states.contains_key("123"));
+    }
+
+    #[test]
+    fn test_watch_job_reaches_completed() {
+        let mut view = JobsView::new();
+        view.watched_states
+            .insert("100".to_string(), "RUNNING".to_string());
+
+        let jobs = vec![make_job(
+            "100",
+            "j1",
+            "alice",
+            "COMPLETED",
+            "p1",
+            "",
+            "",
+            "normal",
+        )];
+
+        let notifications = view.check_watched_jobs(&jobs);
+        assert_eq!(notifications.len(), 1);
+        assert!(notifications[0].1.contains("COMPLETED"));
+        // Job should be unwatched after reaching terminal state
+        assert!(!view.watched_states.contains_key("100"));
+    }
+
+    #[test]
+    fn test_watch_job_disappears() {
+        let mut view = JobsView::new();
+        view.watched_states
+            .insert("100".to_string(), "RUNNING".to_string());
+
+        let jobs = vec![]; // Job no longer in queue
+
+        let notifications = view.check_watched_jobs(&jobs);
+        assert_eq!(notifications.len(), 1);
+        assert!(notifications[0].1.contains("gone from queue"));
+        // Job should be unwatched
+        assert!(!view.watched_states.contains_key("100"));
+    }
+
+    #[test]
+    fn test_watch_job_no_change() {
+        let mut view = JobsView::new();
+        view.watched_states
+            .insert("100".to_string(), "RUNNING".to_string());
+
+        let jobs = vec![make_job(
+            "100", "j1", "alice", "RUNNING", "p1", "", "", "normal",
+        )];
+
+        let notifications = view.check_watched_jobs(&jobs);
+        assert_eq!(notifications.len(), 0);
+        // Job should still be watched with same state
+        assert_eq!(view.watched_states.get("100"), Some(&"RUNNING".to_string()));
+    }
+
+    #[test]
+    fn test_watch_job_state_changes() {
+        let mut view = JobsView::new();
+        view.watched_states
+            .insert("100".to_string(), "PENDING".to_string());
+
+        let jobs = vec![make_job(
+            "100", "j1", "alice", "RUNNING", "p1", "", "", "normal",
+        )];
+
+        let notifications = view.check_watched_jobs(&jobs);
+        assert_eq!(notifications.len(), 0);
+        // Job should still be watched with updated state
+        assert_eq!(view.watched_states.get("100"), Some(&"RUNNING".to_string()));
+    }
+
+    #[test]
+    fn test_watched_job_shows_star() {
+        let mut view = JobsView::new();
+        view.watched_states
+            .insert("100".to_string(), "RUNNING".to_string());
+
+        assert!(view.is_watched("100"));
+        assert!(!view.is_watched("200"));
+    }
+
+    #[test]
+    fn test_watched_count() {
+        let mut view = JobsView::new();
+        assert_eq!(view.watched_count(), 0);
+
+        view.watched_states
+            .insert("100".to_string(), "RUNNING".to_string());
+        assert_eq!(view.watched_count(), 1);
+
+        view.watched_states
+            .insert("200".to_string(), "PENDING".to_string());
+        assert_eq!(view.watched_count(), 2);
+    }
+
+    #[test]
+    fn test_toggle_select() {
+        let mut view = JobsView::new();
+        let jobs = vec![
+            make_job("1", "j1", "alice", "RUNNING", "p1", "", "", "normal"),
+            make_job("2", "j2", "alice", "PENDING", "p1", "", "", "normal"),
+        ];
+        view.update(jobs, "alice");
+        view.table_state.select(Some(0));
+
+        // Toggle select on row 0
+        view.toggle_select();
+        assert!(view.visual_selection.is_active());
+        let rows = view.visual_selection.rows();
+        assert_eq!(rows.len(), 1);
+        assert!(rows.contains(&0));
+
+        // Toggle again on same row - should deselect
+        view.toggle_select();
+        assert!(!view.visual_selection.is_active());
+    }
+
+    #[test]
+    fn test_select_all_visible() {
+        let mut view = JobsView::new();
+        let jobs = vec![
+            make_job("1", "j1", "alice", "RUNNING", "p1", "", "", "normal"),
+            make_job("2", "j2", "alice", "PENDING", "p1", "", "", "normal"),
+            make_job("3", "j3", "alice", "RUNNING", "p1", "", "", "normal"),
+        ];
+        view.update(jobs, "alice");
+
+        view.select_all_visible();
+        assert!(view.visual_selection.is_active());
+        let rows = view.visual_selection.rows();
+        assert_eq!(rows.len(), 3);
+        assert!(rows.contains(&0));
+        assert!(rows.contains(&1));
+        assert!(rows.contains(&2));
+    }
+
+    #[test]
+    fn test_clear_selection() {
+        let mut view = JobsView::new();
+        let jobs = vec![make_job(
+            "1", "j1", "alice", "RUNNING", "p1", "", "", "normal",
+        )];
+        view.update(jobs, "alice");
+        view.table_state.select(Some(0));
+
+        view.toggle_select();
+        assert!(view.visual_selection.is_active());
+
+        view.clear_selection();
+        assert!(!view.visual_selection.is_active());
+    }
+
+    #[test]
+    fn test_selected_or_current_job_ids_with_selection() {
+        let mut view = JobsView::new();
+        let jobs = vec![
+            make_job("100", "j1", "alice", "RUNNING", "p1", "", "", "normal"),
+            make_job("200", "j2", "alice", "RUNNING", "p1", "", "", "normal"),
+            make_job("300", "j3", "alice", "COMPLETED", "p1", "", "", "normal"),
+        ];
+        view.update(jobs, "alice");
+
+        // Select rows 0 and 1 (both RUNNING jobs, won't be reordered)
+        view.visual_selection.enter(0);
+        view.visual_selection
+            .move_cursor(1, view.last_jobs.len(), 0);
+
+        let ids = view.selected_or_current_job_ids();
+        assert_eq!(ids.len(), 2);
+        // The two RUNNING jobs should be selected
+        assert!(ids.contains(&"100".to_string()));
+        assert!(ids.contains(&"200".to_string()));
+    }
+
+    #[test]
+    fn test_selected_or_current_job_ids_no_selection() {
+        let mut view = JobsView::new();
+        let jobs = vec![
+            make_job("100", "j1", "alice", "RUNNING", "p1", "", "", "normal"),
+            make_job("200", "j2", "alice", "PENDING", "p1", "", "", "normal"),
+        ];
+        view.update(jobs, "alice");
+        view.table_state.select(Some(1));
+
+        let ids = view.selected_or_current_job_ids();
+        assert_eq!(ids.len(), 1);
+        assert_eq!(ids[0], "200");
+    }
+
+    #[test]
+    fn test_toggle_mine_key() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut view = JobsView::new();
+        let jobs = vec![
+            make_job("1", "j1", "alice", "RUNNING", "p1", "", "", "normal"),
+            make_job("2", "j2", "bob", "RUNNING", "p1", "", "", "normal"),
+        ];
+        view.update(jobs, "alice");
+
+        // 'u' key should toggle mine filter
+        let key = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE);
+        let handled = view.handle_key(key);
+        assert!(handled);
+        assert!(view.filter_mine);
+
+        // 'm' key should NOT toggle mine filter
+        view.filter_mine = false;
+        let key = KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE);
+        let handled = view.handle_key(key);
+        assert!(!handled);
+        assert!(!view.filter_mine);
+    }
+
+    #[test]
+    fn test_space_key_toggle_select() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut view = JobsView::new();
+        let jobs = vec![make_job(
+            "1", "j1", "alice", "RUNNING", "p1", "", "", "normal",
+        )];
+        view.update(jobs, "alice");
+        view.table_state.select(Some(0));
+
+        let key = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE);
+        let handled = view.handle_key(key);
+        assert!(handled);
+        assert!(view.visual_selection.is_active());
+    }
+
+    #[test]
+    fn test_asterisk_key_select_all() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut view = JobsView::new();
+        let jobs = vec![
+            make_job("1", "j1", "alice", "RUNNING", "p1", "", "", "normal"),
+            make_job("2", "j2", "alice", "PENDING", "p1", "", "", "normal"),
+        ];
+        view.update(jobs, "alice");
+
+        let key = KeyEvent::new(KeyCode::Char('*'), KeyModifiers::NONE);
+        let handled = view.handle_key(key);
+        assert!(handled);
+        assert!(view.visual_selection.is_active());
+        assert_eq!(view.visual_selection.rows().len(), 2);
+    }
+
+    #[test]
+    fn test_x_key_clear_selection() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut view = JobsView::new();
+        let jobs = vec![make_job(
+            "1", "j1", "alice", "RUNNING", "p1", "", "", "normal",
+        )];
+        view.update(jobs, "alice");
+        view.table_state.select(Some(0));
+        view.visual_selection.enter(0);
+
+        let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+        let handled = view.handle_key(key);
+        assert!(handled);
+        assert!(!view.visual_selection.is_active());
+    }
+
+    #[test]
+    fn test_f_key_cycle_state_filter() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut view = JobsView::new();
+        assert_eq!(view.filter_state, "");
+
+        let key = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::NONE);
+        view.handle_key(key);
+        assert_eq!(view.filter_state, "RUNNING");
+    }
+
+    #[test]
+    fn test_t_key_sort_time() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut view = JobsView::new();
+        let key = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE);
+        let handled = view.handle_key(key);
+        assert!(handled);
+        assert_eq!(view.sort_col, Some("TIME".to_string()));
+    }
+
+    #[test]
+    fn test_c_key_sort_cpus() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut view = JobsView::new();
+        let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE);
+        let handled = view.handle_key(key);
+        assert!(handled);
+        assert_eq!(view.sort_col, Some("CPUS".to_string()));
+    }
+
+    #[test]
+    fn test_s_key_sort_state() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut view = JobsView::new();
+        let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE);
+        let handled = view.handle_key(key);
+        assert!(handled);
+        assert_eq!(view.sort_col, Some("STATE".to_string()));
     }
 }
