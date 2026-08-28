@@ -10,16 +10,14 @@ or **real Slurm cluster** (if you already have one).
 
 | Tool | Install | Why |
 |------|---------|-----|
-| Python 3.11+ | `brew install python` or [python.org](https://python.org) | runtime |
-| [uv](https://docs.astral.sh/uv/) | `brew install uv` | dependency & venv management |
+| Rust 1.75+ | [rustup.rs](https://rustup.rs) | toolchain (`cargo`, `rustfmt`, `clippy`) |
 | Docker Desktop | [docker.com/desktop](https://www.docker.com/products/docker-desktop/) | **Mode A only** — runs a local 4-node Slurm cluster |
 | Git | built-in on macOS (or `brew install git`) | source control |
 
 Verify everything is present:
 
 ```bash
-python3 --version   # 3.11+
-uv --version        # 0.x.x
+cargo --version     # 1.75+
 docker info         # (Mode A only) should not error
 git --version
 ```
@@ -31,7 +29,7 @@ git --version
 ```bash
 git clone https://github.com/t3bol90/sqtop.git
 cd sqtop
-uv sync             # installs runtime + dev deps into .venv
+cargo build         # fetches dependencies and builds the debug binary
 ```
 
 ---
@@ -73,11 +71,11 @@ cd ..
 ### A4. Run sqtop
 
 ```bash
-./run.sh
+PATH="$PWD/bin:$PATH" cargo run
 ```
 
-`run.sh` prepends `bin/` to `PATH` so every Slurm call is silently redirected
-to the Docker container — sqtop sees a real Slurm API.
+Prepending `bin/` to `PATH` redirects every Slurm call into the Docker
+container — sqtop sees a real Slurm API.
 
 ### A5. Daily workflow
 
@@ -85,7 +83,7 @@ to the Docker container — sqtop sees a real Slurm API.
 # Start work
 ./slurm-cluster/cluster.sh up
 ./slurm-cluster/cluster.sh submit-test
-./run.sh
+PATH="$PWD/bin:$PATH" cargo run
 
 # During development — resubmit jobs when they finish
 ./slurm-cluster/cluster.sh submit-test
@@ -113,7 +111,7 @@ Use this if `squeue`, `sinfo`, and `scontrol` are already in your `PATH`
 (HPC login node, container with Slurm installed, etc.).
 
 ```bash
-uv run sqtop
+cargo run --release
 ```
 
 That's it. No shims, no Docker — sqtop calls the real Slurm binaries directly.
@@ -125,8 +123,10 @@ That's it. No shims, no Docker — sqtop calls the real Slurm binaries directly.
 Tests do not require Docker or a running cluster (they mock all subprocess calls).
 
 ```bash
-uv run pytest                              # full suite
-uv run pytest tests/test_slurm_actions.py  # single file
+cargo test                    # full suite
+cargo test config::            # one module
+cargo fmt --check             # formatting gate
+cargo clippy --all-targets -- -D warnings   # lint gate (must exit 0)
 ```
 
 All tests must pass before committing.
@@ -191,8 +191,8 @@ After making changes, run through this in sqtop to catch regressions.
 Before opening a PR, verify the package installs cleanly from source:
 
 ```bash
-uv tool install --force .
-sqtop --version 2>/dev/null || sqtop   # should launch
+cargo install --path . --force
+sqtop --version
 ```
 
 ---
@@ -200,28 +200,36 @@ sqtop --version 2>/dev/null || sqtop   # should launch
 ## 5. Code structure at a glance
 
 ```
-src/sqtop/
-├── app.py          # Textual App: tabs, bindings, interval control
-├── slurm.py        # Data layer: ALL Slurm CLI calls go through here
-├── config.py       # ~/.config/sqtop/config.toml load/save
+src/
+├── main.rs         # CLI parsing, terminal lifecycle, panic-safe restore
+├── app.rs          # App state, tabs, key routing, refresh worker, modals
+├── config.rs       # ~/.config/sqtop/config.toml load/save (comment-preserving)
+├── columns.rs      # Column definitions, ordering, visibility
+├── responsive.rs   # Width tiers and column allocation
+├── chrome.rs       # Tab bar, subtitle, footer labels
+├── clipboard.rs    # OSC 52 and subprocess copy
+├── investigation.rs# Pending-reason explanations (built-in + site table)
+├── slurm/
+│   ├── model.rs        # Job / Node / Partition types
+│   ├── parse.rs        # Output parsers
+│   ├── exec.rs         # Runner: local or SSH, 10s timeout, command history
+│   ├── fetch.rs        # fetch_jobs / fetch_nodes / fetch_cluster_summary
+│   └── investigate.rs  # Job and node investigation reports
 └── views/
-    ├── jobs.py         # Jobs tab (filter, sort, search)
-    ├── nodes.py        # Nodes tab (CPU/GPU bars)
-    ├── partitions.py   # Partitions tab
-    ├── job_detail.py   # Job detail modal
-    ├── node_detail.py  # Node detail modal
-    ├── log_viewer.py   # Stdout/stderr log viewer
-    ├── job_actions.py  # Job action modal
-    ├── bulk_actions.py # Bulk cancel/hold
-    ├── settings.py     # Settings screen
-    ├── confirm.py      # Generic yes/no modal
-    ├── widgets.py      # CyclicDataTable
-    └── health.py       # Command-latency diagnostic view
+    ├── jobs.rs         # Jobs tab (filter, sort, search, selection, watch)
+    ├── nodes.rs        # Nodes tab (CPU/GPU bars)
+    ├── partitions.rs   # Partitions tab
+    ├── history.rs      # History tab (sacct)
+    ├── health.rs       # Command-latency diagnostic view
+    ├── table_state.rs  # Cyclic cursor + anchored state restore
+    ├── visual.rs       # Visual selection and TSV yank
+    ├── detail/         # Job/node detail, log viewer, batch script, deps
+    └── modals/         # Actions, bulk, confirm, column toggle, palette, help
 ```
 
 Key rules when adding code:
 
-- **All** Slurm subprocess calls go in `slurm.py`. Views never call `subprocess` directly.
+- **All** Slurm subprocess calls go through `slurm::exec::Runner`. Views never spawn processes directly.
 - Use `CyclicDataTable` (not `DataTable`) for any new main view table.
 - Long-running work (subprocess, file I/O) must run in `@work(thread=True)`;
   use `call_from_thread` to update the UI from a worker.

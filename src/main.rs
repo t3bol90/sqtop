@@ -28,6 +28,16 @@ struct Cli {
     /// this flag, then `$SQTOP_CONFIG`, then `~/.config/sqtop/config.toml`.
     #[arg(long)]
     config: Option<std::path::PathBuf>,
+
+    /// Remote Slurm cluster via SSH host/alias from `~/.ssh/config`.
+    ///
+    /// Overrides `[remote].host` in the config file.
+    #[arg(long, value_name = "HOST_OR_ALIAS")]
+    remote: Option<String>,
+
+    /// SSH identity file used with `--remote`.
+    #[arg(long, value_name = "PATH")]
+    ssh_key: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -40,7 +50,13 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let config_path = config::resolve_config_path(cli.config);
-    let settings = config::load(&config_path);
+    let mut settings = config::load(&config_path);
+
+    // `--remote` overrides `[remote].host`; `--ssh-key` has no config equivalent.
+    if let Some(host) = cli.remote.as_ref() {
+        settings.remote.host = host.trim().to_string();
+    }
+    let ssh_key = cli.ssh_key.unwrap_or_default().trim().to_string();
 
     // Enable raw mode, then run TUI in a closure so we can restore on ANY error
     enable_raw_mode()?;
@@ -50,7 +66,7 @@ fn main() -> Result<()> {
         execute!(stdout, crossterm::event::EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
-        app::run(&mut terminal, settings, config_path)
+        app::run(&mut terminal, settings, config_path, ssh_key)
     })();
 
     // Always restore terminal, even on error - best effort, never masks the real error

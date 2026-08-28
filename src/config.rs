@@ -289,6 +289,24 @@ pub fn resolve_config_path(cli_arg: Option<PathBuf>) -> PathBuf {
     default_config_path()
 }
 
+/// Resolve the site-specific pending-reason table path (Python `__main__.main`).
+///
+/// Precedence:
+/// 1. `[investigation].reasons_path`, expanded; relative paths resolve against
+///    the config directory, not the process working directory.
+/// 2. Auto-discovery of a `reasons.toml` sibling of the config file.
+/// 3. `None` when neither exists, which leaves the built-in table untouched.
+pub fn resolve_reasons_path(config: &Config, config_path: &Path) -> Option<PathBuf> {
+    let dir = config_path.parent().unwrap_or_else(|| Path::new("."));
+    let configured = config.investigation.reasons_path.trim();
+    if !configured.is_empty() {
+        let p = expand_tilde(Path::new(configured));
+        return Some(if p.is_absolute() { p } else { dir.join(p) });
+    }
+    let candidate = dir.join("reasons.toml");
+    candidate.is_file().then_some(candidate)
+}
+
 /// Get the default XDG config path.
 fn default_config_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
@@ -824,6 +842,43 @@ fn atomic_write(path: &Path, text: &str) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reasons_path_prefers_configured_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        let mut config = Config::default();
+        config.investigation.reasons_path = "site.toml".to_string();
+        let p = resolve_reasons_path(&config, &cfg_path).unwrap();
+        assert_eq!(p, dir.path().join("site.toml"));
+    }
+
+    #[test]
+    fn reasons_path_resolves_relative_against_config_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        let mut config = Config::default();
+        config.investigation.reasons_path = "sub/site.toml".to_string();
+        let p = resolve_reasons_path(&config, &cfg_path).unwrap();
+        assert!(p.is_absolute());
+        assert!(p.ends_with("sub/site.toml"));
+    }
+
+    #[test]
+    fn reasons_path_auto_discovers_sibling_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        std::fs::write(dir.path().join("reasons.toml"), "").unwrap();
+        let p = resolve_reasons_path(&Config::default(), &cfg_path).unwrap();
+        assert_eq!(p, dir.path().join("reasons.toml"));
+    }
+
+    #[test]
+    fn reasons_path_is_none_without_configured_or_sibling_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg_path = dir.path().join("config.toml");
+        assert!(resolve_reasons_path(&Config::default(), &cfg_path).is_none());
+    }
     use std::fs;
     use std::sync::Mutex;
     use tempfile::TempDir;

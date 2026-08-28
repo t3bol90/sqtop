@@ -569,12 +569,7 @@ impl App {
 
         let runner = self.runner.clone();
         let tx = self.msg_tx.clone();
-        let _max_related = self.config.investigation.max_related_jobs; // Reserved for future use
-        let reasons_path = if self.config.investigation.reasons_path.is_empty() {
-            None
-        } else {
-            Some(self.config.investigation.reasons_path.clone())
-        };
+        let reasons_path = crate::config::resolve_reasons_path(&self.config, &self.config_path);
 
         std::thread::spawn(move || {
             use crate::slurm::investigate::investigate_job;
@@ -1749,6 +1744,19 @@ impl App {
         }
     }
 
+    /// Apply an SSH identity file to the runner (from `--ssh-key`).
+    ///
+    /// No-op when the key is empty or no remote host is configured, matching
+    /// Python's `slurm.set_remote(host, key)`, which is only called when a
+    /// host is resolved.
+    pub fn set_ssh_key(&mut self, key: &str) {
+        if key.is_empty() || self.config.remote.host.is_empty() {
+            return;
+        }
+        self.runner
+            .set_remote(self.config.remote.host.clone(), key.to_string());
+    }
+
     /// Toggle the auto-refresh pause state (Python: `action_toggle_pause`).
     ///
     /// Manual refresh with `r` still works while paused.
@@ -1830,8 +1838,10 @@ pub fn run<B: Backend>(
     terminal: &mut Terminal<B>,
     config: Config,
     config_path: std::path::PathBuf,
+    ssh_key: String,
 ) -> Result<()> {
     let mut app = App::new(config, config_path);
+    app.set_ssh_key(&ssh_key);
 
     loop {
         app.drain_messages();

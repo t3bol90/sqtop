@@ -40,7 +40,6 @@ jobs:
           target: ${{ matrix.target }}
           archive: $bin-$tag-$target
           checksum: sha256
-          manifest_path: rust/Cargo.toml
           use-cross: ${{ matrix.use-cross || false }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

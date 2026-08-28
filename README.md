@@ -27,9 +27,10 @@ Available targets: `x86_64-unknown-linux-gnu`, `x86_64-unknown-linux-musl` (for 
 cargo install sqtop
 ```
 
-**Python version (v0.1.x, deprecated):**
+**Python version (v0.1.x, retired):**
 
-The final Python release is `v0.1.0`. Install with:
+`v0.1.0` is the final Python release. It is no longer developed; the Rust
+version above replaces it. To install the archived version:
 
 ```bash
 uv tool install git+https://github.com/t3bol90/sqtop.git@v0.1.0
@@ -61,7 +62,7 @@ sqtop --remote my-cluster --ssh-key ~/.ssh/id_ed25519
 If you run with this repo's local Docker-backed cluster shims, use:
 
 ```bash
-./run.sh
+PATH="$PWD/bin:$PATH" sqtop
 ```
 
 ## Terminal sizing
