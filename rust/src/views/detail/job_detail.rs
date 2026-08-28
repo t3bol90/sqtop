@@ -286,4 +286,26 @@ mod tests {
         // The bar should contain 3 filled chars and 7 empty for 25%
         assert!(span.content.contains("███░"));
     }
+
+    #[test]
+    fn test_set_efficiency_updates_screen_state() {
+        use crate::slurm::fetch::JobEfficiency;
+        let data = HashMap::new();
+        let mut screen = JobDetailScreen::new("12345".to_string(), data);
+
+        let eff = JobEfficiency {
+            available: true,
+            cpu_eff: 0.85,
+            mem_eff: 0.65,
+            cpu_used_str: "1:23:45".to_string(),
+            cpu_alloc_str: "1:38:40".to_string(),
+            mem_peak_mb: 650,
+            mem_alloc_mb: 1000,
+        };
+
+        screen.set_efficiency(eff.clone());
+        assert!(screen.efficiency.is_some());
+        assert_eq!(screen.efficiency.as_ref().unwrap().cpu_eff, 0.85);
+        assert_eq!(screen.efficiency.as_ref().unwrap().mem_eff, 0.65);
+    }
 }

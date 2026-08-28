@@ -20,6 +20,7 @@ pub enum JobAction {
     Detail,
     BatchScript,
     Dependencies,
+    ArrayTasks,
     Cancel,
 }
 
@@ -92,6 +93,12 @@ impl JobActionState {
                 label: "View dependencies".to_string(),
                 action: Some(JobAction::Dependencies),
                 enabled: true,
+                style_variant: ButtonVariant::Default,
+            },
+            JobActionOption {
+                label: "View array tasks".to_string(),
+                action: Some(JobAction::ArrayTasks),
+                enabled: job.job_id.contains('_'),
                 style_variant: ButtonVariant::Default,
             },
             JobActionOption {
@@ -309,5 +316,34 @@ mod tests {
 
         assert!(!state.options[0].enabled);
         assert!(!state.options[1].enabled);
+    }
+
+    #[test]
+    fn test_non_array_job_disables_array_tasks() {
+        let job = make_test_job(); // job_id is "12345", no underscore
+        let state = JobActionState::new(job);
+
+        // Find the array tasks option
+        let array_option = state
+            .options
+            .iter()
+            .find(|opt| opt.action == Some(JobAction::ArrayTasks));
+        assert!(array_option.is_some());
+        assert!(!array_option.unwrap().enabled);
+    }
+
+    #[test]
+    fn test_array_job_enables_array_tasks() {
+        let mut job = make_test_job();
+        job.job_id = "12345_0".to_string(); // Array job with underscore
+        let state = JobActionState::new(job);
+
+        // Find the array tasks option
+        let array_option = state
+            .options
+            .iter()
+            .find(|opt| opt.action == Some(JobAction::ArrayTasks));
+        assert!(array_option.is_some());
+        assert!(array_option.unwrap().enabled);
     }
 }

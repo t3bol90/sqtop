@@ -1,6 +1,6 @@
 //! Node detail modal.
 
-use crate::slurm::model::Node;
+use crate::slurm::model::{Job, Node};
 use crate::views::detail::Outcome;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
@@ -18,6 +18,7 @@ pub struct NodeDetailScreen {
     data: HashMap<String, String>,
     scroll_offset: usize,
     lines: Vec<String>,
+    jobs: Vec<Job>,
 }
 
 impl NodeDetailScreen {
@@ -29,7 +30,15 @@ impl NodeDetailScreen {
             data,
             scroll_offset: 0,
             lines,
+            jobs: Vec::new(),
         }
+    }
+
+    /// Set the jobs running on this node.
+    pub fn set_jobs(&mut self, jobs: Vec<Job>) {
+        self.jobs = jobs;
+        // Rebuild lines to include jobs
+        self.lines = build_detail_lines_with_jobs(&self.node, &self.data, &self.jobs);
     }
 
     /// Handle key input.
@@ -122,6 +131,14 @@ impl NodeDetailScreen {
 }
 
 fn build_detail_lines(_node: &Node, data: &HashMap<String, String>) -> Vec<String> {
+    build_detail_lines_with_jobs(_node, data, &[])
+}
+
+fn build_detail_lines_with_jobs(
+    _node: &Node,
+    data: &HashMap<String, String>,
+    jobs: &[Job],
+) -> Vec<String> {
     let mut lines = vec![format!("Node Detail\n")];
 
     // Highlight keys (shown first)
@@ -149,6 +166,18 @@ fn build_detail_lines(_node: &Node, data: &HashMap<String, String>) -> Vec<Strin
     for (k, v) in data {
         if !highlight_keys.contains(&k.as_str()) {
             lines.push(format!("  {}: {}", k, v));
+        }
+    }
+
+    // Jobs section
+    if !jobs.is_empty() {
+        lines.push(String::new());
+        lines.push(format!("Jobs on Node ({}):", jobs.len()));
+        for job in jobs {
+            lines.push(format!(
+                "  {} - {} [{}] - {}",
+                job.job_id, job.name, job.state, job.user
+            ));
         }
     }
 
