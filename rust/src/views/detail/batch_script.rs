@@ -23,6 +23,9 @@ pub struct BatchScriptScreen {
     script: String,
     lines: Vec<String>,
     scroll: Scroll,
+    /// Viewport height from the last render; lets key handling resolve `Bottom`
+    /// to the same offset the user is actually looking at.
+    viewport_height: usize,
 }
 
 impl BatchScriptScreen {
@@ -34,6 +37,7 @@ impl BatchScriptScreen {
             script,
             lines,
             scroll: Scroll::At(0),
+            viewport_height: 0,
         }
     }
 
@@ -50,34 +54,22 @@ impl BatchScriptScreen {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => Outcome::Close,
             KeyCode::Up | KeyCode::Char('k') => {
-                let current = match self.scroll {
-                    Scroll::At(n) => n,
-                    Scroll::Bottom => self.lines.len().saturating_sub(1),
-                };
+                let current = self.resolved_offset(self.viewport_height);
                 self.scroll = Scroll::At(current.saturating_sub(1));
                 Outcome::None
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                let current = match self.scroll {
-                    Scroll::At(n) => n,
-                    Scroll::Bottom => self.lines.len().saturating_sub(1),
-                };
+                let current = self.resolved_offset(self.viewport_height);
                 self.scroll = Scroll::At(current.saturating_add(1));
                 Outcome::None
             }
             KeyCode::PageUp => {
-                let current = match self.scroll {
-                    Scroll::At(n) => n,
-                    Scroll::Bottom => self.lines.len().saturating_sub(1),
-                };
+                let current = self.resolved_offset(self.viewport_height);
                 self.scroll = Scroll::At(current.saturating_sub(10));
                 Outcome::None
             }
             KeyCode::PageDown => {
-                let current = match self.scroll {
-                    Scroll::At(n) => n,
-                    Scroll::Bottom => self.lines.len().saturating_sub(1),
-                };
+                let current = self.resolved_offset(self.viewport_height);
                 self.scroll = Scroll::At(current.saturating_add(10));
                 Outcome::None
             }
@@ -94,7 +86,7 @@ impl BatchScriptScreen {
     }
 
     /// Render the batch script viewer.
-    pub fn render(&self, f: &mut Frame, area: Rect) {
+    pub fn render(&mut self, f: &mut Frame, area: Rect) {
         // Center the dialog (90% width, 85% height)
         let width = (area.width * 9 / 10).clamp(60, 140);
         let height = (area.height * 85 / 100).clamp(20, 50);
@@ -134,6 +126,7 @@ impl BatchScriptScreen {
 
         // Script content with resolved scroll position
         let content_height = chunks[1].height as usize;
+        self.viewport_height = content_height;
         let offset = self.resolved_offset(content_height);
 
         let visible_lines: Vec<Line> = self
@@ -176,7 +169,8 @@ mod tests {
 
     #[test]
     fn test_scroll_down_increments_offset() {
-        let mut screen = BatchScriptScreen::new("123".to_string(), "line1\nline2\nline3".to_string());
+        let mut screen =
+            BatchScriptScreen::new("123".to_string(), "line1\nline2\nline3".to_string());
         // 3 lines, viewport 2 -> max scroll is 1
         assert_eq!(screen.resolved_offset(2), 0);
 
@@ -190,7 +184,8 @@ mod tests {
 
     #[test]
     fn test_scroll_up_decrements_offset() {
-        let mut screen = BatchScriptScreen::new("123".to_string(), "line1\nline2\nline3".to_string());
+        let mut screen =
+            BatchScriptScreen::new("123".to_string(), "line1\nline2\nline3".to_string());
         screen.scroll = Scroll::At(2);
 
         screen.handle_key(KeyEvent::from(KeyCode::Up));
