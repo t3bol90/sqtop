@@ -25,30 +25,6 @@ pub const SINFO_NODE_FMT: &str = "%n|%T|%P|%c|%C|%m|%e|%O|%G";
 /// Slurm null sentinels we treat as "not provided".
 pub const NULL_SENTINELS: &[&str] = &["", "(null)", "N/A", "None", "none"];
 
-/// Pending job states (full and abbreviated).
-pub const PENDING_STATES: &[&str] = &["PENDING", "PD"];
-
-/// Running job states (full and abbreviated).
-pub const RUNNING_STATES: &[&str] = &["RUNNING", "R"];
-
-/// Terminal job states (full and abbreviated).
-pub const TERMINAL_STATES: &[&str] = &[
-    "COMPLETED",
-    "CD",
-    "FAILED",
-    "F",
-    "CANCELLED",
-    "CA",
-    "TIMEOUT",
-    "TO",
-    "NODE_FAIL",
-    "NF",
-    "PREEMPTED",
-    "PR",
-    "OUT_OF_MEMORY",
-    "OOM",
-];
-
 /// Parse one squeue row produced with `SQUEUE_FMT` into a `Job`.
 ///
 /// Returns `None` for malformed rows (fewer than 12 pipe-separated fields)
@@ -280,22 +256,6 @@ pub fn normalize_node_state_token(state: &str) -> String {
         .trim_end_matches(|c| SUFFIXES.contains(c))
         .to_uppercase()
 }
-
-/// Parse a numeric Slurm field; return `None` on any failure.
-pub fn safe_int(value: Option<&str>) -> Option<i32> {
-    match value {
-        None => None,
-        Some(v) => {
-            let trimmed = v.trim();
-            if trimmed.is_empty() || trimmed == "?" {
-                None
-            } else {
-                trimmed.parse().ok()
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -543,14 +503,4 @@ mod tests {
     }
 
     // ── safe_int ──────────────────────────────────────────────────────────
-
-    #[test]
-    fn test_safe_int() {
-        assert_eq!(safe_int(None), None);
-        assert_eq!(safe_int(Some("")), None);
-        assert_eq!(safe_int(Some("?")), None);
-        assert_eq!(safe_int(Some("123")), Some(123));
-        assert_eq!(safe_int(Some("  456  ")), Some(456));
-        assert_eq!(safe_int(Some("invalid")), None);
-    }
 }

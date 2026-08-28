@@ -11,10 +11,10 @@ use crate::investigation::{
     InvestigationItem, InvestigationReport, InvestigationTarget, ReasonTable,
 };
 use crate::slurm::exec::Runner;
+use crate::slurm::model::ErrorCategory;
 use crate::slurm::parse::{display, is_present, normalize_node_state_token};
 use std::collections::{HashMap, HashSet};
 use std::sync::LazyLock;
-use std::time::SystemTime;
 
 // Job-state sets (SPEC sec. 6.7)
 static PENDING_STATES: LazyLock<HashSet<&str>> =
@@ -95,7 +95,6 @@ pub fn investigate_job(
 
     let mut report = InvestigationReport {
         target,
-        generated_at: SystemTime::now(),
         summary: Vec::new(),
         evidence: Vec::new(),
         explanations: Vec::new(),
@@ -653,7 +652,7 @@ pub fn investigate_job(
                 .insert("sacct".to_string(), "unavailable".to_string());
             report.errors.push(InvestigationError {
                 source: "sacct".to_string(),
-                category: "slurm_field_unavailable".to_string(),
+                category: ErrorCategory::SlurmFieldUnavailable.as_str().to_string(),
                 message: "sacct accounting not available for this job".to_string(),
                 stderr: None,
             });
@@ -682,7 +681,6 @@ pub fn investigate_node(
 
     let mut report = InvestigationReport {
         target,
-        generated_at: SystemTime::now(),
         summary: Vec::new(),
         evidence: Vec::new(),
         explanations: Vec::new(),
@@ -1326,6 +1324,40 @@ mod tests {
         assert!(mem_eff_ev[0].value.contains('%'));
 
         assert_eq!(report.raw_sections.get("sacct").unwrap(), "available");
+    }
+
+    #[test]
+    fn test_investigate_job_sacct_unavailable_produces_field_unavailable_error() {
+        let mut fake = FakeCommands::new();
+        let reasons = ReasonTable::default();
+        let job_id = "12345";
+
+        // Job exists but is COMPLETED
+        fake.add("scontrol show job 12345", "JobId=12345 JobState=COMPLETED");
+
+        // sacct returns no data (empty output)
+        fake.add(
+            "sacct -j 12345 --noheader -P -o JobID,CPUTimeRAW,TotalCPU,ReqMem,MaxRSS",
+            "",
+        );
+
+        let report = investigate_job(&fake, &reasons, job_id);
+
+        // Verify raw_sections marks sacct as unavailable
+        assert_eq!(
+            report.raw_sections.get("sacct").map(|s| s.as_str()),
+            Some("unavailable")
+        );
+
+        // Verify error with category slurm_field_unavailable
+        let sacct_errors: Vec<_> = report
+            .errors
+            .iter()
+            .filter(|e| e.source == "sacct")
+            .collect();
+        assert_eq!(sacct_errors.len(), 1);
+        assert_eq!(sacct_errors[0].category, "slurm_field_unavailable");
+        assert!(sacct_errors[0].message.contains("accounting not available"));
     }
 
     #[test]

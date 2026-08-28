@@ -22,7 +22,8 @@ pub struct ArrayTaskScreen {
 impl ArrayTaskScreen {
     /// Create a new array task screen.
     pub fn new(job: Job, tasks: Vec<Job>) -> Self {
-        let table_state = CyclicTableState::with_row_count(tasks.len());
+        let mut table_state = CyclicTableState::new();
+        table_state.set_row_count(tasks.len());
         Self {
             job,
             tasks,

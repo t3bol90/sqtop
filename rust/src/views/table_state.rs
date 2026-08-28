@@ -26,6 +26,7 @@ impl CyclicTableState {
     }
 
     /// Create a table state with the given row count.
+    #[cfg(test)]
     pub fn with_row_count(row_count: usize) -> Self {
         Self {
             selected: if row_count > 0 { Some(0) } else { None },
@@ -81,6 +82,7 @@ impl CyclicTableState {
     }
 
     /// Get the row count.
+    #[cfg(test)]
     pub fn row_count(&self) -> usize {
         self.row_count
     }
@@ -94,17 +96,12 @@ impl CyclicTableState {
 pub struct CapturedTableState {
     /// The anchor value (job_id or node name) of the selected row, if any.
     pub anchor: Option<String>,
-    /// Scroll offset (if applicable).
-    pub scroll_offset: f64,
 }
 
 impl CapturedTableState {
     /// Create a new captured state.
-    pub fn new(anchor: Option<String>, scroll_offset: f64) -> Self {
-        Self {
-            anchor,
-            scroll_offset,
-        }
+    pub fn new(anchor: Option<String>) -> Self {
+        Self { anchor }
     }
 
     /// Restore cursor position by finding the row with the matching anchor.
@@ -189,7 +186,7 @@ mod tests {
     // Anchor-based capture/restore tests
     #[test]
     fn test_restore_finds_matching_anchor() {
-        let state = CapturedTableState::new(Some("job123".to_string()), 0.0);
+        let state = CapturedTableState::new(Some("job123".to_string()));
         let anchors = ["job100", "job123", "job200"];
         let get_anchor = |i: usize| anchors.get(i).map(|s| s.to_string());
         assert_eq!(state.restore(3, get_anchor), Some(1));
@@ -197,7 +194,7 @@ mod tests {
 
     #[test]
     fn test_restore_returns_none_when_anchor_not_found() {
-        let state = CapturedTableState::new(Some("job999".to_string()), 0.0);
+        let state = CapturedTableState::new(Some("job999".to_string()));
         let anchors = ["job100", "job123", "job200"];
         let get_anchor = |i: usize| anchors.get(i).map(|s| s.to_string());
         assert_eq!(state.restore(3, get_anchor), None);
@@ -205,7 +202,7 @@ mod tests {
 
     #[test]
     fn test_restore_returns_none_when_no_anchor() {
-        let state = CapturedTableState::new(None, 0.0);
+        let state = CapturedTableState::new(None);
         let anchors = ["job100", "job123", "job200"];
         let get_anchor = |i: usize| anchors.get(i).map(|s| s.to_string());
         assert_eq!(state.restore(3, get_anchor), None);
@@ -213,7 +210,7 @@ mod tests {
 
     #[test]
     fn test_restore_first_match_when_duplicates() {
-        let state = CapturedTableState::new(Some("job123".to_string()), 0.0);
+        let state = CapturedTableState::new(Some("job123".to_string()));
         let anchors = ["job123", "job123", "job200"];
         let get_anchor = |i: usize| anchors.get(i).map(|s| s.to_string());
         assert_eq!(state.restore(3, get_anchor), Some(0));

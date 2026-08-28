@@ -23,7 +23,6 @@ pub enum ColumnToggleResult {
 #[derive(Debug, Clone)]
 pub struct ColumnToggleState {
     view_name: String,
-    all_columns: Vec<String>,
     hidden: HashSet<String>,
     display_order: Vec<String>,
     focused: usize,
@@ -60,7 +59,6 @@ impl ColumnToggleState {
 
         Self {
             view_name,
-            all_columns: display_order.clone(),
             hidden,
             display_order,
             focused: 0,

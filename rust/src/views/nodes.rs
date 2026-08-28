@@ -229,7 +229,7 @@ impl NodesView {
             .table_state
             .selected()
             .and_then(|idx| self.last_sorted_nodes.get(idx).map(|n| n.name.clone()));
-        CapturedTableState::new(anchor, 0.0)
+        CapturedTableState::new(anchor)
     }
 
     /// Restore table state after refresh/re-sort.

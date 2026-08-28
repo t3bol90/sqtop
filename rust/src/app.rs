@@ -62,28 +62,6 @@ impl Tab {
         }
     }
 
-    /// Cycle to the next tab.
-    pub fn next(self) -> Tab {
-        match self {
-            Tab::Jobs => Tab::Nodes,
-            Tab::Nodes => Tab::Partitions,
-            Tab::Partitions => Tab::History,
-            Tab::History => Tab::Health,
-            Tab::Health => Tab::Jobs,
-        }
-    }
-
-    /// Cycle to the previous tab.
-    pub fn prev(self) -> Tab {
-        match self {
-            Tab::Jobs => Tab::Health,
-            Tab::Nodes => Tab::Jobs,
-            Tab::Partitions => Tab::Nodes,
-            Tab::History => Tab::Partitions,
-            Tab::Health => Tab::History,
-        }
-    }
-
     /// Get the refresh interval for this tab from config.
     pub fn interval(self, config: &Config) -> Duration {
         let seconds = match self {
@@ -235,7 +213,9 @@ impl App {
                     self.status = None;
                 }
                 Msg::History(sacct_jobs) => {
-                    self.history_view.update(sacct_jobs, &current_user);
+                    let (old_selected, anchor) =
+                        self.history_view.update(sacct_jobs, &current_user);
+                    self.history_view.restore_state(old_selected, anchor);
                     self.status = None;
                 }
                 Msg::Investigation(report) => {
@@ -1079,21 +1059,6 @@ fn render_modal(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn tab_cycle() {
-        assert_eq!(Tab::Jobs.next(), Tab::Nodes);
-        assert_eq!(Tab::Nodes.next(), Tab::Partitions);
-        assert_eq!(Tab::Partitions.next(), Tab::History);
-        assert_eq!(Tab::History.next(), Tab::Health);
-        assert_eq!(Tab::Health.next(), Tab::Jobs);
-
-        assert_eq!(Tab::Jobs.prev(), Tab::Health);
-        assert_eq!(Tab::Nodes.prev(), Tab::Jobs);
-        assert_eq!(Tab::Partitions.prev(), Tab::Nodes);
-        assert_eq!(Tab::History.prev(), Tab::Partitions);
-        assert_eq!(Tab::Health.prev(), Tab::History);
-    }
 
     #[test]
     fn tab_titles() {

@@ -229,7 +229,7 @@ pub fn render(f: &mut Frame, area: Rect, screen: &mut InvestigationScreen) {
 mod tests {
     use super::*;
     use crate::investigation::{InvestigationReport, InvestigationTarget};
-    use std::time::SystemTime;
+    use std::collections::HashMap;
 
     #[test]
     fn test_investigation_screen_for_job() {
@@ -259,7 +259,17 @@ mod tests {
             identifier: "12345".to_string(),
             source: "cursor".to_string(),
         };
-        let report = InvestigationReport::new(target, SystemTime::now());
+        let report = InvestigationReport {
+            target,
+            summary: Vec::new(),
+            evidence: Vec::new(),
+            explanations: Vec::new(),
+            related_jobs: Vec::new(),
+            related_nodes: Vec::new(),
+            suggested_actions: Vec::new(),
+            raw_sections: HashMap::new(),
+            errors: Vec::new(),
+        };
 
         screen.load_report(report);
         assert!(screen.loaded);

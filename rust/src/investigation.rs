@@ -11,7 +11,6 @@ use crate::slurm::model::{Job, Node};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::LazyLock;
-use std::time::SystemTime;
 
 // Type aliases matching the Python literals
 pub type InvestigationKind = String; // "job" or "node"
@@ -86,7 +85,6 @@ pub struct InvestigationItem {
 #[derive(Debug, Clone)]
 pub struct InvestigationReport {
     pub target: InvestigationTarget,
-    pub generated_at: SystemTime,
     pub summary: Vec<InvestigationItem>,
     pub evidence: Vec<InvestigationEvidence>,
     pub explanations: Vec<InvestigationExplanation>,
@@ -97,23 +95,7 @@ pub struct InvestigationReport {
     pub errors: Vec<InvestigationError>,
 }
 
-impl InvestigationReport {
-    /// Create a new empty report.
-    pub fn new(target: InvestigationTarget, generated_at: SystemTime) -> Self {
-        Self {
-            target,
-            generated_at,
-            summary: Vec::new(),
-            evidence: Vec::new(),
-            explanations: Vec::new(),
-            related_jobs: Vec::new(),
-            related_nodes: Vec::new(),
-            suggested_actions: Vec::new(),
-            raw_sections: HashMap::new(),
-            errors: Vec::new(),
-        }
-    }
-}
+impl InvestigationReport {}
 
 // Pending-reason explanation table (SPEC sec. 8.4.1)
 static PENDING_REASONS: LazyLock<HashMap<&str, (&str, &str, &str)>> = LazyLock::new(|| {
@@ -600,8 +582,17 @@ mod tests {
             identifier: "1".to_string(),
             source: "cursor".to_string(),
         };
-        let now = SystemTime::now();
-        let report = InvestigationReport::new(target, now);
+        let report = InvestigationReport {
+            target,
+            summary: Vec::new(),
+            evidence: Vec::new(),
+            explanations: Vec::new(),
+            related_jobs: Vec::new(),
+            related_nodes: Vec::new(),
+            suggested_actions: Vec::new(),
+            raw_sections: HashMap::new(),
+            errors: Vec::new(),
+        };
         assert!(report.summary.is_empty());
         assert!(report.evidence.is_empty());
         assert!(report.explanations.is_empty());
@@ -903,7 +894,17 @@ mod tests {
             identifier: identifier.to_string(),
             source: "cursor".to_string(),
         };
-        InvestigationReport::new(target, SystemTime::now())
+        InvestigationReport {
+            target,
+            summary: Vec::new(),
+            evidence: Vec::new(),
+            explanations: Vec::new(),
+            related_jobs: Vec::new(),
+            related_nodes: Vec::new(),
+            suggested_actions: Vec::new(),
+            raw_sections: HashMap::new(),
+            errors: Vec::new(),
+        }
     }
 
     #[test]

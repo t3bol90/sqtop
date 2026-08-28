@@ -32,7 +32,6 @@ pub enum ErrorCategory {
     SlurmFieldUnavailable,
     SshConnectionFailed,
     SshAuthFailed,
-    SshCommandTimeout,
     JobNotFound,
     NodeNotFound,
 }
@@ -48,7 +47,6 @@ impl ErrorCategory {
             Self::SlurmFieldUnavailable => "slurm_field_unavailable",
             Self::SshConnectionFailed => "ssh_connection_failed",
             Self::SshAuthFailed => "ssh_auth_failed",
-            Self::SshCommandTimeout => "ssh_command_timeout",
             Self::JobNotFound => "job_not_found",
             Self::NodeNotFound => "node_not_found",
         }

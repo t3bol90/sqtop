@@ -15,7 +15,6 @@ use ratatui::{
 /// Modal prompt for node expression override when attaching to a job.
 pub struct AttachPromptScreen {
     pub job_id: String,
-    default_node: String,
     input: String,
     title: String,
     placeholder: String,
@@ -26,8 +25,7 @@ impl AttachPromptScreen {
     pub fn new(job_id: String, default_node: String) -> Self {
         Self {
             job_id,
-            input: default_node.clone(),
-            default_node,
+            input: default_node,
             title: "Attach with node override".to_string(),
             placeholder: "node name/expression (empty to skip -w)".to_string(),
         }

@@ -168,6 +168,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_batch_script_accessors() {
+        let screen = BatchScriptScreen::new("123".to_string(), "#!/bin/bash".to_string());
+        assert!(!screen.content().is_empty());
+        assert!(screen.label().contains("123"));
+    }
+
+    #[test]
     fn test_scroll_down_increments_offset() {
         let mut screen =
             BatchScriptScreen::new("123".to_string(), "line1\nline2\nline3".to_string());

@@ -184,20 +184,12 @@ mod tests {
             "slurm_permission_denied"
         );
         assert_eq!(
-            format_error_category(&Some(ErrorCategory::SlurmFieldUnavailable)),
-            "slurm_field_unavailable"
-        );
-        assert_eq!(
             format_error_category(&Some(ErrorCategory::SshConnectionFailed)),
             "ssh_connection_failed"
         );
         assert_eq!(
             format_error_category(&Some(ErrorCategory::SshAuthFailed)),
             "ssh_auth_failed"
-        );
-        assert_eq!(
-            format_error_category(&Some(ErrorCategory::SshCommandTimeout)),
-            "ssh_command_timeout"
         );
         assert_eq!(
             format_error_category(&Some(ErrorCategory::JobNotFound)),

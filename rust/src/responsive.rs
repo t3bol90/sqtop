@@ -23,11 +23,6 @@ impl Tier {
         }
     }
 
-    /// Return all tiers in rank order (xs lowest, lg highest).
-    const fn all() -> [Self; 4] {
-        [Self::Xs, Self::Sm, Self::Md, Self::Lg]
-    }
-
     /// Return the rank (0..4) of this tier.
     const fn rank(self) -> usize {
         match self {

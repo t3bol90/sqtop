@@ -124,7 +124,7 @@ pub fn capture_cursor_state(
     let anchor = cursor_row
         .filter(|&row| row < partitions.len())
         .map(|row| partitions[row].partition.clone());
-    CapturedTableState::new(anchor, 0.0)
+    CapturedTableState::new(anchor)
 }
 
 /// Restore cursor position to the row matching the anchor partition name.
@@ -404,7 +404,7 @@ mod tests {
             make_partition("debug", "up", "idle"),
         ];
 
-        let state = CapturedTableState::new(Some("debug".to_string()), 0.0);
+        let state = CapturedTableState::new(Some("debug".to_string()));
         let restored = restore_cursor_position(&state, &partitions, 0);
 
         assert_eq!(restored, Some(2)); // "debug" is at index 2
@@ -417,7 +417,7 @@ mod tests {
             make_partition("cpu", "up", "mixed"),
         ];
 
-        let state = CapturedTableState::new(Some("missing".to_string()), 0.0);
+        let state = CapturedTableState::new(Some("missing".to_string()));
         let restored = restore_cursor_position(&state, &partitions, 1);
 
         // Should fall back to saved row (1), which is valid
@@ -428,7 +428,7 @@ mod tests {
     fn test_restore_cursor_position_saved_row_clamped() {
         let partitions = vec![make_partition("gpu", "up", "idle")];
 
-        let state = CapturedTableState::new(Some("missing".to_string()), 0.0);
+        let state = CapturedTableState::new(Some("missing".to_string()));
         let restored = restore_cursor_position(&state, &partitions, 10);
 
         // Should clamp saved row to max valid index (0)
@@ -439,7 +439,7 @@ mod tests {
     fn test_restore_cursor_position_empty_partitions() {
         let partitions: Vec<ClusterSummary> = vec![];
 
-        let state = CapturedTableState::new(Some("gpu".to_string()), 0.0);
+        let state = CapturedTableState::new(Some("gpu".to_string()));
         let restored = restore_cursor_position(&state, &partitions, 0);
 
         assert_eq!(restored, None);

@@ -392,6 +392,27 @@ mod tests {
     }
 
     #[test]
+    fn test_history_preserves_cursor_on_update() {
+        let mut view = HistoryView::new();
+        let jobs = vec![
+            make_job("100", "COMPLETED", "alice"),
+            make_job("101", "COMPLETED", "alice"),
+            make_job("102", "COMPLETED", "bob"),
+        ];
+
+        // First update
+        let (old_selected, anchor) = view.update(jobs.clone(), "alice");
+        view.restore_state(old_selected, anchor);
+        view.table_state.select(Some(1));
+
+        // Second update with same data - cursor should stay on job 101
+        let (old_selected, anchor) = view.update(jobs, "alice");
+        view.restore_state(old_selected, anchor);
+
+        assert_eq!(view.table_state.selected(), Some(1));
+    }
+
+    #[test]
     fn test_state_colors() {
         assert_eq!(HistoryView::state_color("COMPLETED"), Color::DarkGray);
         assert_eq!(HistoryView::state_color("FAILED"), Color::Red);
