@@ -11,6 +11,7 @@
 //! - `area: Rect` - rendering area
 //!
 
+pub mod detail;
 pub mod health;
 pub mod history;
 pub mod investigate;
