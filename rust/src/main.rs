@@ -1,4 +1,5 @@
 mod app;
+mod chrome;
 mod clipboard;
 mod columns;
 mod config;
