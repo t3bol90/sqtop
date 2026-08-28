@@ -196,7 +196,10 @@ pub struct App {
     request_tx: mpsc::Sender<Tab>,
     last_refresh: Option<Instant>,
     pending_action: Option<PendingAction>,
-    // Mouse drag state for column reordering
+    /// Last rendered table area for Jobs view (for mouse hit testing)
+    pub last_jobs_table_area: Option<ratatui::layout::Rect>,
+    /// Last rendered table area for Nodes view (for mouse hit testing)
+    pub last_nodes_table_area: Option<ratatui::layout::Rect>,
 }
 
 impl App {
@@ -245,6 +248,8 @@ impl App {
             request_tx,
             last_refresh: None,
             pending_action: None,
+            last_jobs_table_area: None,
+            last_nodes_table_area: None,
         }
     }
 
@@ -1573,6 +1578,64 @@ impl App {
     }
 
     /// Handle mouse events.
+    pub fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) {
+        use crossterm::event::MouseEventKind;
+
+        // Skip if modal is active
+        if !matches!(self.modal, Modal::None) {
+            return;
+        }
+
+        // Route to the active view using the last rendered area
+        match self.tab {
+            Tab::Jobs => {
+                // Use the actual rendered area from the last frame
+                let Some(table_area) = self.last_jobs_table_area else {
+                    return; // No render yet, ignore mouse events
+                };
+
+                match mouse.kind {
+                    MouseEventKind::Down(_) => {
+                        self.jobs_view
+                            .on_mouse_down(mouse.column, mouse.row, table_area);
+                    }
+                    MouseEventKind::Drag(_) => {
+                        self.jobs_view.on_mouse_move(mouse.column, mouse.row);
+                    }
+                    MouseEventKind::Up(_) => {
+                        self.jobs_view
+                            .on_mouse_up(mouse.column, mouse.row, table_area);
+                    }
+                    _ => {}
+                }
+            }
+            Tab::Nodes => {
+                // Use the actual rendered area from the last frame
+                let Some(table_area) = self.last_nodes_table_area else {
+                    return; // No render yet, ignore mouse events
+                };
+
+                match mouse.kind {
+                    MouseEventKind::Down(_) => {
+                        self.nodes_view
+                            .on_mouse_down(mouse.column, mouse.row, table_area);
+                    }
+                    MouseEventKind::Drag(_) => {
+                        self.nodes_view.on_mouse_move(mouse.column, mouse.row);
+                    }
+                    MouseEventKind::Up(_) => {
+                        self.nodes_view
+                            .on_mouse_up(mouse.column, mouse.row, table_area);
+                    }
+                    _ => {}
+                }
+            }
+            _ => {
+                // No mouse support for other tabs yet
+            }
+        }
+    }
+
     /// Check if it's time to refresh the current tab.
     pub fn should_refresh(&self) -> bool {
         match self.last_refresh {
@@ -1663,8 +1726,14 @@ pub fn run<B: Backend>(
         }
 
         if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                app.handle_key(key.code, key.modifiers);
+            match event::read()? {
+                Event::Key(key) => {
+                    app.handle_key(key.code, key.modifiers);
+                }
+                Event::Mouse(mouse) => {
+                    app.handle_mouse(mouse);
+                }
+                _ => {}
             }
         }
 

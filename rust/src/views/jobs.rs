@@ -64,6 +64,14 @@ pub struct JobsView {
     pub column_widths: HashMap<String, u16>,
     /// Reorder target column index (in visible-column space)
     pub reorder_target_idx: usize,
+    /// Mouse drag: column being dragged (visible-space index)
+    drag_col_index: Option<usize>,
+    /// Mouse drag: press X position (area-local, not widget-local)
+    drag_press_x: u16,
+    /// Mouse drag: press Y position
+    drag_press_y: u16,
+    /// Mouse drag: threshold crossed
+    dragging: bool,
     /// Table cursor state
     pub table_state: CyclicTableState,
     /// Visual selection state
@@ -94,6 +102,10 @@ impl JobsView {
             column_order: Vec::new(),
             column_widths: HashMap::new(),
             reorder_target_idx: 0,
+            drag_col_index: None,
+            drag_press_x: 0,
+            drag_press_y: 0,
+            dragging: false,
             table_state: CyclicTableState::new(),
             visual_selection: crate::views::visual::VisualSelection::new(),
             last_jobs: Vec::new(),
@@ -268,6 +280,170 @@ impl JobsView {
                 self.pending_config_update = Some(update);
             }
         }
+    }
+
+    /// Handle mouse down event on header - start drag if on header row.
+    pub fn on_mouse_down(&mut self, mouse_x: u16, mouse_y: u16, area: ratatui::layout::Rect) {
+        // Check if click is on header row (first row of the table area)
+        if mouse_y != area.y {
+            return;
+        }
+
+        // Map X coordinate to column index using current column widths
+        let col_idx = self.x_to_col_index(mouse_x, area);
+        if let Some(idx) = col_idx {
+            self.drag_col_index = Some(idx);
+            self.drag_press_x = mouse_x;
+            self.drag_press_y = mouse_y;
+            self.dragging = false;
+        }
+    }
+
+    /// Handle mouse move - activate drag mode if threshold crossed.
+    pub fn on_mouse_move(&mut self, mouse_x: u16, _mouse_y: u16) {
+        if self.drag_col_index.is_none() {
+            return;
+        }
+        let delta = (mouse_x as i32 - self.drag_press_x as i32).unsigned_abs();
+        if delta >= 2 {
+            // DRAG_THRESHOLD_CELLS
+            self.dragging = true;
+        }
+    }
+
+    /// Handle mouse up - complete or cancel drag.
+    pub fn on_mouse_up(&mut self, mouse_x: u16, _mouse_y: u16, area: ratatui::layout::Rect) {
+        if let Some(from_idx) = self.drag_col_index {
+            if self.dragging {
+                // Find the insertion boundary
+                let to_idx = self.x_to_boundary_index(mouse_x, area);
+                if from_idx != to_idx {
+                    // Perform the reorder using move_in_order
+                    self.reorder_column_drag(from_idx, to_idx);
+                }
+            }
+        }
+        self.reset_drag_state();
+    }
+
+    /// Cancel drag (called on Escape key).
+    pub fn cancel_drag(&mut self) -> bool {
+        if self.dragging {
+            self.reset_drag_state();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Reset drag state.
+    fn reset_drag_state(&mut self) {
+        self.drag_col_index = None;
+        self.drag_press_x = 0;
+        self.drag_press_y = 0;
+        self.dragging = false;
+    }
+
+    /// Map area-local X coordinate to column index (0-based visible column).
+    fn x_to_col_index(&self, x: u16, area: ratatui::layout::Rect) -> Option<usize> {
+        if x < area.x {
+            return None;
+        }
+        let widget_x = x - area.x;
+        let mut pos = 0u16;
+
+        for (idx, (_name, width)) in self.current_cols_for_drag().iter().enumerate() {
+            if widget_x >= pos && widget_x < pos + width {
+                return Some(idx);
+            }
+            pos += width;
+        }
+
+        None
+    }
+
+    /// Map area-local X coordinate to nearest boundary index (for insertion).
+    fn x_to_boundary_index(&self, x: u16, area: ratatui::layout::Rect) -> usize {
+        if x < area.x {
+            return 0;
+        }
+        let widget_x = x - area.x;
+        let boundaries = self.column_boundaries();
+
+        if boundaries.is_empty() {
+            return 0;
+        }
+
+        // Find closest boundary
+        let mut best_idx = 0;
+        let mut best_dist = (widget_x as i32 - boundaries[0] as i32).unsigned_abs();
+
+        for (i, &boundary) in boundaries.iter().enumerate().skip(1) {
+            let dist = (widget_x as i32 - boundary as i32).unsigned_abs();
+            if dist < best_dist {
+                best_dist = dist;
+                best_idx = i;
+            }
+        }
+
+        best_idx.min(self.visible_column_names().len())
+    }
+
+    /// Get column boundaries (cumulative widths).
+    fn column_boundaries(&self) -> Vec<u16> {
+        let mut boundaries = vec![0];
+        let mut pos = 0;
+        for (_, width) in &self.current_cols_for_drag() {
+            pos += width;
+            boundaries.push(pos);
+        }
+        boundaries
+    }
+
+    /// Get current columns (name, width) for drag calculations.
+    fn current_cols_for_drag(&self) -> Vec<(String, u16)> {
+        self.visible_column_names()
+            .into_iter()
+            .filter_map(|name| self.column_widths.get(&name).map(|width| (name, *width)))
+            .collect()
+    }
+
+    /// Perform column reorder from drag.
+    fn reorder_column_drag(&mut self, from_idx: usize, to_idx: usize) {
+        use crate::columns::move_in_order;
+
+        let visible = self.visible_column_names();
+        if from_idx >= visible.len() {
+            return;
+        }
+
+        let target_name = &visible[from_idx];
+
+        // Calculate the insertion point in absolute column_order
+        let before = if to_idx == 0 {
+            // Moving to the start
+            Some(visible.first().map(|s| s.as_str()).unwrap_or(""))
+        } else if to_idx >= visible.len() {
+            // Moving to the end
+            None
+        } else {
+            // Moving before visible[to_idx]
+            Some(visible.get(to_idx).map(|s| s.as_str()).unwrap_or(""))
+        };
+
+        self.column_order = move_in_order(&self.column_order, target_name, before);
+
+        // Persist column order
+        let mut columns = toml::Table::new();
+        let order_array: Vec<toml::Value> = self
+            .column_order
+            .iter()
+            .map(|s| toml::Value::String(s.clone()))
+            .collect();
+        columns.insert("jobs_order".to_string(), toml::Value::Array(order_array));
+        let mut update = HashMap::new();
+        update.insert("columns".to_string(), toml::Value::Table(columns));
+        self.pending_config_update = Some(update);
     }
 
     /// Apply the filter pipeline: mine -> search -> sort.
@@ -477,6 +653,11 @@ impl JobsView {
     /// Handle key input for the jobs view.
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
         use crossterm::event::{KeyCode, KeyModifiers};
+
+        // Cancel drag on Escape (if dragging)
+        if key.code == KeyCode::Esc && self.cancel_drag() {
+            return true;
+        }
 
         // If search input is active, handle search keys first
         if self.search_input_active {
@@ -1572,5 +1753,225 @@ mod tests {
         view.reorder_target_idx = 0;
         let key = KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE);
         assert!(view.handle_key(key));
+    }
+
+    #[test]
+    fn test_no_drag_no_message_same_position() {
+        // Press and release at same position -> no reorder
+        let mut view = JobsView::new();
+        view.column_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        view.column_widths.insert("A".to_string(), 10);
+        view.column_widths.insert("B".to_string(), 10);
+        view.column_widths.insert("C".to_string(), 10);
+
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 24,
+        };
+
+        let initial_order = view.column_order.clone();
+
+        // Press and release at same x
+        view.on_mouse_down(5, 0, area);
+        view.on_mouse_up(5, 0, area);
+
+        assert_eq!(view.column_order, initial_order);
+        assert!(view.pending_config_update.is_none());
+    }
+
+    #[test]
+    fn test_drag_horizontal_posts_column_reordered() {
+        // Drag from col 0 to boundary 2 -> reorder
+        let mut view = JobsView::new();
+        view.column_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        view.column_widths.insert("A".to_string(), 10);
+        view.column_widths.insert("B".to_string(), 10);
+        view.column_widths.insert("C".to_string(), 10);
+
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 24,
+        };
+
+        // Press in column 0
+        view.on_mouse_down(5, 0, area);
+        assert_eq!(view.drag_col_index, Some(0));
+
+        // Move to boundary 2 (x = 20)
+        view.on_mouse_move(20, 0);
+        assert!(view.dragging);
+
+        // Release at boundary 2
+        view.on_mouse_up(20, 0, area);
+
+        // Column A should have moved
+        assert_ne!(view.column_order[0], "A");
+        assert!(view.pending_config_update.is_some());
+    }
+
+    #[test]
+    fn test_esc_cancels_drag_no_message() {
+        // Escape during drag -> cancel, no reorder
+        let mut view = JobsView::new();
+        view.column_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        view.column_widths.insert("A".to_string(), 10);
+        view.column_widths.insert("B".to_string(), 10);
+        view.column_widths.insert("C".to_string(), 10);
+
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 24,
+        };
+
+        let initial_order = view.column_order.clone();
+
+        // Start drag
+        view.on_mouse_down(5, 0, area);
+        view.on_mouse_move(20, 0);
+        assert!(view.dragging);
+
+        // Cancel with Escape
+        assert!(view.cancel_drag());
+        assert!(!view.dragging);
+        assert!(view.drag_col_index.is_none());
+
+        // Order unchanged
+        assert_eq!(view.column_order, initial_order);
+        assert!(view.pending_config_update.is_none());
+    }
+
+    #[test]
+    fn test_drag_past_rightmost_boundary() {
+        // Drag beyond rightmost -> clamp to end
+        let mut view = JobsView::new();
+        view.column_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        view.column_widths.insert("A".to_string(), 10);
+        view.column_widths.insert("B".to_string(), 10);
+        view.column_widths.insert("C".to_string(), 10);
+
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 24,
+        };
+
+        // Press in column 0
+        view.on_mouse_down(5, 0, area);
+        // Move far right
+        view.on_mouse_move(100, 0);
+        assert!(view.dragging);
+
+        // Release far right
+        view.on_mouse_up(100, 0, area);
+
+        // Column A should be at the end
+        assert_eq!(view.column_order.last(), Some(&"A".to_string()));
+    }
+
+    #[test]
+    fn test_drag_past_leftmost_boundary() {
+        // Drag before leftmost -> clamp to start
+        let mut view = JobsView::new();
+        view.column_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        view.column_widths.insert("A".to_string(), 10);
+        view.column_widths.insert("B".to_string(), 10);
+        view.column_widths.insert("C".to_string(), 10);
+
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 24,
+        };
+
+        // Press in column 2
+        view.on_mouse_down(25, 0, area);
+        // Move far left
+        view.on_mouse_move(0, 0);
+        assert!(view.dragging);
+
+        // Release far left
+        view.on_mouse_up(0, 0, area);
+
+        // Column C should be at the start
+        assert_eq!(view.column_order.first(), Some(&"C".to_string()));
+    }
+
+    #[test]
+    fn test_mouse_before_render_does_nothing() {
+        // Mouse events before first render should be ignored
+        use crate::app::App;
+        use crate::config::Config;
+        use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        use std::path::PathBuf;
+
+        let config = Config::default();
+        let mut app = App::new(config, PathBuf::from("/tmp/test.toml"));
+
+        // No render has happened yet, so last_jobs_table_area is None
+        assert!(app.last_jobs_table_area.is_none());
+
+        // Send a mouse down event
+        let mouse_event = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 10,
+            row: 5,
+            modifiers: crossterm::event::KeyModifiers::empty(),
+        };
+
+        // Should not panic, should do nothing
+        app.handle_mouse(mouse_event);
+
+        // No drag should have started
+        assert!(app.jobs_view.drag_col_index.is_none());
+    }
+
+    #[test]
+    fn test_drag_wide_terminal_correct_column() {
+        // On a 200-wide terminal, grab the actual column under the mouse
+        let mut view = JobsView::new();
+        // Set up 5 columns, each 40 wide
+        view.column_order = vec![
+            "A".to_string(),
+            "B".to_string(),
+            "C".to_string(),
+            "D".to_string(),
+            "E".to_string(),
+        ];
+        view.column_widths.insert("A".to_string(), 40);
+        view.column_widths.insert("B".to_string(), 40);
+        view.column_widths.insert("C".to_string(), 40);
+        view.column_widths.insert("D".to_string(), 40);
+        view.column_widths.insert("E".to_string(), 40);
+
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: 200,
+            height: 24,
+        };
+
+        // Click in column B (x in range 40-79)
+        view.on_mouse_down(50, 0, area);
+        assert_eq!(view.drag_col_index, Some(1)); // Column B is at index 1
+
+        // Drag to column D boundary (x=120)
+        view.on_mouse_move(120, 0);
+        assert!(view.dragging);
+
+        // Release
+        view.on_mouse_up(120, 0, area);
+
+        // Column B should have moved toward D
+        // The exact position depends on move_in_order logic, but B should not be at index 1 anymore
+        let b_pos = view.column_order.iter().position(|s| s == "B");
+        assert_ne!(b_pos, Some(1));
     }
 }

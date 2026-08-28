@@ -57,6 +57,14 @@ pub struct NodesView {
     column_order: Vec<String>,
     /// Reorder target column index (for keyboard-based column reordering).
     reorder_target_idx: usize,
+    /// Mouse drag: column being dragged (visible-space index)
+    drag_col_index: Option<usize>,
+    /// Mouse drag: press X position (area-local)
+    drag_press_x: u16,
+    /// Mouse drag: press Y position
+    drag_press_y: u16,
+    /// Mouse drag: threshold crossed
+    dragging: bool,
     /// Cyclic table cursor state.
     table_state: CyclicTableState,
     /// Visual selection state.
@@ -98,6 +106,10 @@ impl NodesView {
             hidden_cols,
             column_order,
             reorder_target_idx: 0,
+            drag_col_index: None,
+            drag_press_x: 0,
+            drag_press_y: 0,
+            dragging: false,
             table_state: CyclicTableState::new(),
             visual_selection: crate::views::visual::VisualSelection::new(),
             last_sorted_nodes: Vec::new(),
@@ -366,10 +378,175 @@ impl NodesView {
         }
     }
 
+    /// Handle mouse down event on header - start drag if on header row.
+    pub fn on_mouse_down(&mut self, mouse_x: u16, mouse_y: u16, area: ratatui::layout::Rect) {
+        // Check if click is on header row (first row of the table area)
+        if mouse_y != area.y {
+            return;
+        }
+
+        // Map X coordinate to column index using current column widths
+        let col_idx = self.x_to_col_index(mouse_x, area);
+        if let Some(idx) = col_idx {
+            self.drag_col_index = Some(idx);
+            self.drag_press_x = mouse_x;
+            self.drag_press_y = mouse_y;
+            self.dragging = false;
+        }
+    }
+
+    /// Handle mouse move - activate drag mode if threshold crossed.
+    pub fn on_mouse_move(&mut self, mouse_x: u16, _mouse_y: u16) {
+        if self.drag_col_index.is_none() {
+            return;
+        }
+        let delta = (mouse_x as i32 - self.drag_press_x as i32).unsigned_abs();
+        if delta >= 2 {
+            // DRAG_THRESHOLD_CELLS
+            self.dragging = true;
+        }
+    }
+
+    /// Handle mouse up - complete or cancel drag.
+    pub fn on_mouse_up(&mut self, mouse_x: u16, _mouse_y: u16, area: ratatui::layout::Rect) {
+        if let Some(from_idx) = self.drag_col_index {
+            if self.dragging {
+                // Find the insertion boundary
+                let to_idx = self.x_to_boundary_index(mouse_x, area);
+                if from_idx != to_idx {
+                    // Perform the reorder using move_in_order
+                    self.reorder_column_drag(from_idx, to_idx);
+                }
+            }
+        }
+        self.reset_drag_state();
+    }
+
+    /// Cancel drag (called on Escape key).
+    pub fn cancel_drag(&mut self) -> bool {
+        if self.dragging {
+            self.reset_drag_state();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Reset drag state.
+    fn reset_drag_state(&mut self) {
+        self.drag_col_index = None;
+        self.drag_press_x = 0;
+        self.drag_press_y = 0;
+        self.dragging = false;
+    }
+
+    /// Map area-local X coordinate to column index (0-based visible column).
+    fn x_to_col_index(&self, x: u16, area: ratatui::layout::Rect) -> Option<usize> {
+        if x < area.x {
+            return None;
+        }
+        let widget_x = x - area.x;
+        let mut pos = 0u16;
+
+        for (idx, (_, width)) in self.current_cols.iter().enumerate() {
+            if widget_x >= pos && widget_x < pos + width {
+                return Some(idx);
+            }
+            pos += width;
+        }
+
+        None
+    }
+
+    /// Map area-local X coordinate to nearest boundary index (for insertion).
+    fn x_to_boundary_index(&self, x: u16, area: ratatui::layout::Rect) -> usize {
+        if x < area.x {
+            return 0;
+        }
+        let widget_x = x - area.x;
+        let boundaries = self.column_boundaries();
+
+        if boundaries.is_empty() {
+            return 0;
+        }
+
+        // Find closest boundary
+        let mut best_idx = 0;
+        let mut best_dist = (widget_x as i32 - boundaries[0] as i32).unsigned_abs();
+
+        for (i, &boundary) in boundaries.iter().enumerate().skip(1) {
+            let dist = (widget_x as i32 - boundary as i32).unsigned_abs();
+            if dist < best_dist {
+                best_dist = dist;
+                best_idx = i;
+            }
+        }
+
+        best_idx.min(self.current_cols.len())
+    }
+
+    /// Get column boundaries (cumulative widths).
+    fn column_boundaries(&self) -> Vec<u16> {
+        let mut boundaries = vec![0];
+        let mut pos = 0;
+        for (_, width) in &self.current_cols {
+            pos += width;
+            boundaries.push(pos);
+        }
+        boundaries
+    }
+
+    /// Perform column reorder from drag.
+    fn reorder_column_drag(&mut self, from_idx: usize, to_idx: usize) {
+        use crate::columns::move_in_order;
+
+        if self.current_cols.is_empty() || from_idx >= self.current_cols.len() {
+            return;
+        }
+
+        let visible: Vec<String> = self
+            .current_cols
+            .iter()
+            .map(|(name, _)| name.clone())
+            .collect();
+        let target_name = &visible[from_idx];
+
+        // Calculate the insertion point in absolute column_order
+        let before = if to_idx == 0 {
+            // Moving to the start
+            Some(visible.first().map(|s| s.as_str()).unwrap_or(""))
+        } else if to_idx >= visible.len() {
+            // Moving to the end
+            None
+        } else {
+            // Moving before visible[to_idx]
+            Some(visible.get(to_idx).map(|s| s.as_str()).unwrap_or(""))
+        };
+
+        self.column_order = move_in_order(&self.column_order, target_name, before);
+
+        // Persist column order
+        let mut columns = toml::Table::new();
+        let order_array: Vec<toml::Value> = self
+            .column_order
+            .iter()
+            .map(|s| toml::Value::String(s.clone()))
+            .collect();
+        columns.insert("nodes_order".to_string(), toml::Value::Array(order_array));
+        let mut update = HashMap::new();
+        update.insert("columns".to_string(), toml::Value::Table(columns));
+        self.pending_config_update = Some(update);
+    }
+
     /// Handle key events for the Nodes view.
     ///
     /// Returns true if the key was handled, false otherwise.
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
+        // Cancel drag on Escape (if dragging)
+        if key.code == KeyCode::Esc && self.cancel_drag() {
+            return true;
+        }
+
         // Visual mode keys
         if self.visual_selection.is_active() {
             match (key.code, key.modifiers) {

@@ -47,6 +47,7 @@ fn main() -> Result<()> {
     let result = (|| -> Result<()> {
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen)?;
+        execute!(stdout, crossterm::event::EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
         app::run(&mut terminal, settings, config_path)
@@ -60,6 +61,7 @@ fn main() -> Result<()> {
 /// Restore terminal state - called both on normal exit and in panic hook.
 fn restore_terminal() -> Result<()> {
     let mut stdout = io::stdout();
+    execute!(stdout, crossterm::event::DisableMouseCapture)?;
     execute!(stdout, cursor::Show)?;
     execute!(stdout, LeaveAlternateScreen)?;
     disable_raw_mode()?;

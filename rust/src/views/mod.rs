@@ -27,6 +27,9 @@ use ratatui::layout::Rect;
 
 /// Render the Jobs tab.
 pub fn render_jobs(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    // Store the actual rendered area for mouse hit testing
+    app.last_jobs_table_area = Some(area);
+
     jobs::render(
         f,
         area,
@@ -39,6 +42,9 @@ pub fn render_jobs(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
 /// Render the Nodes tab.
 pub fn render_nodes(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    // Store the actual rendered area for mouse hit testing
+    app.last_nodes_table_area = Some(area);
+
     // Split the borrow so the view can be mutated while reading node data.
     let App {
         nodes, nodes_view, ..
