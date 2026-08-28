@@ -16,8 +16,6 @@ use std::collections::HashMap;
 /// Rich job information viewer.
 pub struct JobInfoScreen {
     job: Job,
-    detail: HashMap<String, String>,
-    deps: Vec<JobDependency>,
     scroll_offset: usize,
     lines: Vec<Line<'static>>,
     plain_text: String,
@@ -29,8 +27,6 @@ impl JobInfoScreen {
         let (lines, plain_text) = build_info_content(&job, &detail, &deps);
         Self {
             job,
-            detail,
-            deps,
             scroll_offset: 0,
             lines,
             plain_text,

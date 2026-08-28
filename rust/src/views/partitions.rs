@@ -476,7 +476,10 @@ mod tests {
     #[test]
     fn test_render_empty_partitions() {
         let config = Config::default();
-        let mut app = App::new(config);
+        let mut app = App::new(
+            config,
+            std::path::PathBuf::from("/tmp/sqtop-test-config.toml"),
+        );
 
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -493,7 +496,10 @@ mod tests {
     #[test]
     fn test_render_too_small_area() {
         let config = Config::default();
-        let mut app = App::new(config);
+        let mut app = App::new(
+            config,
+            std::path::PathBuf::from("/tmp/sqtop-test-config.toml"),
+        );
 
         let backend = TestBackend::new(8, 2);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -510,7 +516,10 @@ mod tests {
     #[test]
     fn test_render_xs_tier_compact_title() {
         let config = Config::default();
-        let mut app = App::new(config);
+        let mut app = App::new(
+            config,
+            std::path::PathBuf::from("/tmp/sqtop-test-config.toml"),
+        );
         app.partitions = vec![
             make_partition("gpu", "up", "idle"),
             make_partition("cpu", "down", "mixed"),
@@ -531,7 +540,10 @@ mod tests {
     #[test]
     fn test_render_md_tier_detailed_title() {
         let config = Config::default();
-        let mut app = App::new(config);
+        let mut app = App::new(
+            config,
+            std::path::PathBuf::from("/tmp/sqtop-test-config.toml"),
+        );
         app.partitions = vec![
             make_partition("gpu", "up", "idle"),
             make_partition("cpu", "up", "mixed"),

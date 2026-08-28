@@ -233,7 +233,10 @@ mod tests {
     fn test_health_view_reads_from_runner_history() {
         // Health view is passive - it reads from Runner::history(), never issues commands
         let config = Config::default();
-        let app = App::new(config);
+        let app = App::new(
+            config,
+            std::path::PathBuf::from("/tmp/sqtop-test-config.toml"),
+        );
 
         // Initially empty history
         let stats = app.runner.history(100);
@@ -254,7 +257,10 @@ mod tests {
     fn test_health_view_100_entry_cap() {
         // Verify that Runner::history(100) is called, enforcing the 100-entry cap
         let config = Config::default();
-        let app = App::new(config);
+        let app = App::new(
+            config,
+            std::path::PathBuf::from("/tmp/sqtop-test-config.toml"),
+        );
 
         // Simulate 150 commands in history by calling run_result
         for i in 0..150 {
@@ -272,7 +278,10 @@ mod tests {
     #[test]
     fn test_health_view_too_small_area() {
         let config = Config::default();
-        let app = App::new(config);
+        let app = App::new(
+            config,
+            std::path::PathBuf::from("/tmp/sqtop-test-config.toml"),
+        );
 
         // Render with too-small area
         let backend = TestBackend::new(8, 2);
@@ -291,7 +300,10 @@ mod tests {
     fn test_health_view_snapshot() {
         // Create app with some command history
         let config = Config::default();
-        let app = App::new(config);
+        let app = App::new(
+            config,
+            std::path::PathBuf::from("/tmp/sqtop-test-config.toml"),
+        );
 
         // Add a successful and a failed command
         let _ = app.runner.run_result("squeue --version");

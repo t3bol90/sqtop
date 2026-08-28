@@ -1,6 +1,7 @@
 //! Prompt for optional node override when attaching to a job.
 
 use crate::config::AttachConfig;
+#[cfg(test)]
 use crate::slurm::fetch::build_attach_command;
 use crate::views::detail::Outcome;
 use crossterm::event::{KeyCode, KeyEvent};
@@ -44,6 +45,7 @@ impl AttachPromptScreen {
     ///
     /// Returns the command vector ready for execution, or None if the
     /// node override is invalid.
+    #[cfg(test)]
     pub fn build_command(&self, job_id: &str, config: &AttachConfig) -> Vec<String> {
         let node = if self.input.trim().is_empty() {
             None

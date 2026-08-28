@@ -27,7 +27,8 @@ jobs:
         run: cargo fmt --check
 
       - name: Clippy
-        # TODO(port): drop -A dead_code once every ported module is wired and reachable.
+        # TODO(port): drop once every ported module is wired and reachable.
+        # TODO(port): remove -A dead_code once config persistence is wired (config::save/update).
         run: cargo clippy --all-targets -- -D warnings -A dead_code
 
       - name: Run tests

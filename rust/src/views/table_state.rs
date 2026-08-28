@@ -80,12 +80,6 @@ impl CyclicTableState {
             Some(i) => i - 1,
         });
     }
-
-    /// Get the row count.
-    #[cfg(test)]
-    pub fn row_count(&self) -> usize {
-        self.row_count
-    }
 }
 
 /// Captured table state for restoration after refresh/re-sort.

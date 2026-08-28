@@ -1,7 +1,9 @@
 //! Application state and key dispatch.
 
+use crate::chrome;
 use crate::config::Config;
 use crate::investigation::{InvestigationReport, ReasonTable};
+use crate::responsive::tier_for;
 use crate::slurm::exec::Runner;
 use crate::slurm::fetch;
 use crate::slurm::fetch::{JobDependency, JobEfficiency, SacctJob};
@@ -53,6 +55,7 @@ impl Tab {
     }
 
     /// Tab title for display.
+    #[cfg(test)]
     pub fn title(self) -> &'static str {
         match self {
             Tab::Jobs => "Jobs",
@@ -167,6 +170,7 @@ pub enum Msg {
 /// Application state.
 pub struct App {
     pub config: Config,
+    config_path: std::path::PathBuf,
     pub runner: Runner,
     pub tab: Tab,
     pub jobs: Vec<Job>,
@@ -188,7 +192,7 @@ pub struct App {
 
 impl App {
     /// Create a new App with the given config.
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: Config, config_path: std::path::PathBuf) -> Self {
         let runner = Runner::new();
 
         // Configure remote SSH if configured
@@ -216,6 +220,7 @@ impl App {
             history_view,
             config,
             runner,
+            config_path,
             tab: Tab::Jobs,
             jobs: Vec::new(),
             nodes: Vec::new(),
@@ -303,8 +308,14 @@ impl App {
                     log_type,
                     content,
                 } => {
-                    let screen = LogViewerScreen::new(job_id, path, log_type, content);
-                    self.modal = Modal::LogViewer(screen);
+                    // If log viewer is already open, update its content (for follow mode)
+                    if let Modal::LogViewer(ref mut viewer) = self.modal {
+                        viewer.update_content(content);
+                    } else {
+                        // Otherwise create a new screen
+                        let screen = LogViewerScreen::new(job_id, path, log_type, content);
+                        self.modal = Modal::LogViewer(screen);
+                    }
                     self.status = None;
                 }
                 Msg::BatchScript { job_id, script } => {
@@ -382,6 +393,22 @@ impl App {
                 let _ = tx.send(Msg::Error("Log path not found".to_string()));
                 return;
             }
+            let content = fetch::tail_log_file(&runner, &path, 500);
+            let _ = tx.send(Msg::LogViewer {
+                job_id,
+                path,
+                log_type,
+                content,
+            });
+        });
+    }
+
+    /// Refresh the log viewer content (for follow mode).
+    fn refresh_log_viewer(&mut self, job_id: String, path: String, log_type: String) {
+        let runner = self.runner.clone();
+        let tx = self.msg_tx.clone();
+
+        std::thread::spawn(move || {
             let content = fetch::tail_log_file(&runner, &path, 500);
             let _ = tx.send(Msg::LogViewer {
                 job_id,
@@ -546,9 +573,9 @@ impl App {
         use crate::slurm::exec;
         let (ok, message) = exec::cancel_job_result(&self.runner, job_id);
         if ok {
-            self.status = Some(format!("Cancelled job {}", job_id));
+            self.notify(format!("Cancelled job {}", job_id), "Job Action");
         } else {
-            self.status = Some(format!("Cancel failed: {}", message));
+            self.notify(format!("Cancel failed: {}", message), "Job Action");
         }
         self.request_refresh();
     }
@@ -562,14 +589,15 @@ impl App {
         let total = results.len();
 
         if ok_count == total {
-            self.status = Some(format!("{} {} job(s)", action.to_uppercase(), total));
+            self.notify(
+                format!("{} {} job(s)", action.to_uppercase(), total),
+                "Bulk Action",
+            );
         } else {
-            self.status = Some(format!(
-                "{} {}/{} job(s)",
-                action.to_uppercase(),
-                ok_count,
-                total
-            ));
+            self.notify(
+                format!("{} {}/{} job(s)", action.to_uppercase(), ok_count, total),
+                "Bulk Action",
+            );
         }
         self.request_refresh();
     }
@@ -1094,15 +1122,15 @@ impl App {
             // Detail screen copy (ctrl+shift+y)
             (KeyCode::Char('y'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
             | (KeyCode::Char('Y'), KeyModifiers::CONTROL) => {
-                let text: Option<String> = match &self.modal {
-                    Modal::JobInfo(s) => Some(s.plain_text().to_string()),
-                    Modal::JobDetail(s) => Some(s.plain_text().to_string()),
-                    Modal::NodeDetail(s) => Some(s.plain_text().to_string()),
-                    Modal::BatchScript(s) => Some(s.content().to_string()),
-                    Modal::LogViewer(s) => Some(s.content().to_string()),
-                    _ => None,
+                let (text, label): (Option<String>, Option<String>) = match &self.modal {
+                    Modal::JobInfo(s) => (Some(s.plain_text().to_string()), Some(s.label())),
+                    Modal::JobDetail(s) => (Some(s.plain_text().to_string()), Some(s.label())),
+                    Modal::NodeDetail(s) => (Some(s.plain_text().to_string()), Some(s.label())),
+                    Modal::BatchScript(s) => (Some(s.content().to_string()), Some(s.label())),
+                    Modal::LogViewer(s) => (Some(s.content().to_string()), Some(s.label())),
+                    _ => (None, None),
                 };
-                if let Some(text) = text {
+                if let (Some(text), Some(label)) = (text, label) {
                     let remote_host = if self.config.remote.host.is_empty() {
                         None
                     } else {
@@ -1110,9 +1138,13 @@ impl App {
                     };
                     let result = crate::clipboard::copy(&text, &self.config.clipboard, remote_host);
                     if result.ok {
-                        self.status = Some("Copied pane content".to_string());
+                        let mut msg = format!("Copied {}", label);
+                        if result.truncated {
+                            msg.push_str(" (truncated)");
+                        }
+                        self.notify(msg, "Clipboard");
                     } else {
-                        self.status = Some("Copy failed".to_string());
+                        self.notify("Clipboard unavailable", "Clipboard");
                     }
                 }
                 true
@@ -1171,6 +1203,43 @@ impl App {
     pub fn request_refresh(&mut self) {
         let _ = self.request_tx.send(self.tab);
         self.last_refresh = Some(Instant::now());
+
+        // Also refresh log viewer if in follow mode
+        if let Modal::LogViewer(viewer) = &self.modal {
+            if viewer.is_following() {
+                let job_id = viewer.job_id().to_string();
+                let path = viewer.path().to_string();
+                let log_type = viewer.log_type().to_string();
+                self.refresh_log_viewer(job_id, path, log_type);
+            }
+        }
+    }
+
+    /// Show a status message and optionally send a desktop notification.
+    pub fn notify(&mut self, message: impl Into<String>, title: &str) {
+        let msg = message.into();
+        self.status = Some(msg.clone());
+        if self.config.notifications.desktop_enabled {
+            crate::views::modals::notify::desktop_notify(title, &msg);
+        }
+    }
+
+    /// Persist a config change (spawns a thread to avoid blocking UI).
+    fn persist_config_async(&self, updates: HashMap<String, toml::Value>) {
+        let path = self.config_path.clone();
+        std::thread::spawn(move || {
+            let _ = crate::config::update(&path, &updates);
+        });
+    }
+
+    /// Persist theme and interval (spawns a thread).
+    fn persist_theme_interval_async(&self) {
+        let path = self.config_path.clone();
+        let theme = self.config.theme.clone();
+        let interval = self.config.interval.jobs;
+        std::thread::spawn(move || {
+            let _ = crate::config::save(&path, &theme, interval);
+        });
     }
 }
 
@@ -1194,8 +1263,12 @@ fn refresh_worker(runner: Runner, requests: mpsc::Receiver<Tab>, tx: mpsc::Sende
 }
 
 /// Run the application event loop until the user quits.
-pub fn run<B: Backend>(terminal: &mut Terminal<B>, config: Config) -> Result<()> {
-    let mut app = App::new(config);
+pub fn run<B: Backend>(
+    terminal: &mut Terminal<B>,
+    config: Config,
+    config_path: std::path::PathBuf,
+) -> Result<()> {
+    let mut app = App::new(config, config_path);
 
     loop {
         app.drain_messages();
@@ -1244,7 +1317,11 @@ fn render(f: &mut ratatui::Frame, app: &mut App) {
 
 /// Render the tab bar.
 fn render_tabs(f: &mut ratatui::Frame, app: &App, area: Rect) {
-    let titles: Vec<Line> = Tab::all().iter().map(|t| Line::from(t.title())).collect();
+    let tier = tier_for(area.width);
+    let titles: Vec<Line> = Tab::all()
+        .iter()
+        .map(|t| Line::from(chrome::tab_label(*t, tier)))
+        .collect();
 
     let selected = match app.tab {
         Tab::Jobs => 0,
@@ -1255,7 +1332,11 @@ fn render_tabs(f: &mut ratatui::Frame, app: &App, area: Rect) {
     };
 
     let tabs = Tabs::new(titles)
-        .block(Block::default().borders(Borders::ALL).title("sqtop"))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(chrome::sub_title("sqtop", tier, area.width)),
+        )
         .select(selected)
         .style(Style::default().fg(Color::White))
         .highlight_style(
@@ -1280,14 +1361,34 @@ fn render_content(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 
 /// Render the status bar.
 fn render_status(f: &mut ratatui::Frame, app: &App, area: Rect) {
+    use crate::responsive::{tier_for, Tier};
+
     let status_text = if let Some(ref msg) = app.status {
         msg.clone()
     } else {
+        let tier = tier_for(area.width);
+        let mut hints = Vec::new();
+
+        // Build hint list filtered by tier
+        let bindings = [
+            ("q", "quit", true),
+            ("r", "refresh", true),
+            ("1-5", "switch_tab", tier != Tier::Xs),
+            ("?", "show_keybindings", true),
+        ];
+
+        for (key, action, originally_shown) in bindings {
+            if chrome::binding_visible(action, tier, originally_shown) {
+                hints.push(key);
+            }
+        }
+
         format!(
-            "Jobs: {} | Nodes: {} | Partitions: {} | Press 'q' to quit, '1-3' to switch tabs, 'r' to refresh",
+            "Jobs: {} | Nodes: {} | Partitions: {} | Keys: {}",
             app.jobs.len(),
             app.nodes.len(),
-            app.partitions.len()
+            app.partitions.len(),
+            hints.join(" ")
         )
     };
 
@@ -1346,13 +1447,16 @@ mod tests {
     #[test]
     fn quit_keys() {
         let config = Config::default();
-        let mut app = App::new(config);
+        let mut app = App::new(config, std::path::PathBuf::from("/tmp/test_config.toml"));
 
         assert!(!app.should_quit);
         app.handle_key(KeyCode::Char('q'), KeyModifiers::NONE);
         assert!(app.should_quit);
 
-        let mut app2 = App::new(Config::default());
+        let mut app2 = App::new(
+            Config::default(),
+            std::path::PathBuf::from("/tmp/sqtop-test-config.toml"),
+        );
         app2.handle_key(KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert!(app2.should_quit);
     }
@@ -1360,7 +1464,7 @@ mod tests {
     #[test]
     fn tab_switch_keys() {
         let config = Config::default();
-        let mut app = App::new(config);
+        let mut app = App::new(config, std::path::PathBuf::from("/tmp/test_config.toml"));
 
         app.handle_key(KeyCode::Char('2'), KeyModifiers::NONE);
         assert_eq!(app.tab, Tab::Nodes);
@@ -1375,7 +1479,7 @@ mod tests {
     #[test]
     fn message_handling() {
         let config = Config::default();
-        let mut app = App::new(config);
+        let mut app = App::new(config, std::path::PathBuf::from("/tmp/test_config.toml"));
 
         // Initially empty
         assert!(app.jobs.is_empty());
@@ -1399,7 +1503,7 @@ mod tests {
         // Should not panic
         terminal
             .draw(|f| {
-                let mut app = App::new(config);
+                let mut app = App::new(config, std::path::PathBuf::from("/tmp/test_config.toml"));
                 render(f, &mut app);
             })
             .unwrap();
@@ -1416,7 +1520,7 @@ mod modal_tests {
         config.ui.expert_mode = true;
         config.safety.confirm_cancel_single = true;
 
-        let app = App::new(config);
+        let app = App::new(config, std::path::PathBuf::from("/tmp/test_config.toml"));
 
         // expert_mode_enabled should return true
         assert!(app.expert_mode_enabled());
@@ -1432,7 +1536,7 @@ mod modal_tests {
         config.ui.expert_mode = false;
         config.safety.confirm_cancel_single = true;
 
-        let app = App::new(config);
+        let app = App::new(config, std::path::PathBuf::from("/tmp/test_config.toml"));
 
         let need_confirm = !app.expert_mode_enabled() && app.confirm_cancel_single_enabled();
         assert!(
@@ -1447,7 +1551,7 @@ mod modal_tests {
         config.ui.expert_mode = false;
         config.safety.confirm_cancel_single = false;
 
-        let app = App::new(config);
+        let app = App::new(config, std::path::PathBuf::from("/tmp/test_config.toml"));
 
         let need_confirm = !app.expert_mode_enabled() && app.confirm_cancel_single_enabled();
         assert!(
@@ -1462,7 +1566,7 @@ mod modal_tests {
         config.ui.expert_mode = false;
         config.safety.confirm_bulk_actions = false;
 
-        let app = App::new(config);
+        let app = App::new(config, std::path::PathBuf::from("/tmp/test_config.toml"));
 
         // For cancel action
         let action = "cancel";
@@ -1484,7 +1588,7 @@ mod modal_tests {
         config.ui.expert_mode = false;
         config.safety.confirm_bulk_actions = false;
 
-        let app = App::new(config);
+        let app = App::new(config, std::path::PathBuf::from("/tmp/test_config.toml"));
 
         // For hold action
         let action = "hold";
@@ -1503,7 +1607,7 @@ mod modal_tests {
     #[test]
     fn test_open_job_detail_dispatches_async() {
         let config = Config::default();
-        let mut app = App::new(config);
+        let mut app = App::new(config, std::path::PathBuf::from("/tmp/test_config.toml"));
 
         // Add a test job
         app.jobs = vec![Job {
@@ -1539,7 +1643,7 @@ mod modal_tests {
     #[test]
     fn test_open_array_tasks_dispatches_async() {
         let config = Config::default();
-        let mut app = App::new(config);
+        let mut app = App::new(config, std::path::PathBuf::from("/tmp/test_config.toml"));
 
         // Add a test array job
         app.jobs = vec![Job {
@@ -1575,7 +1679,7 @@ mod modal_tests {
     #[test]
     fn test_open_node_detail_dispatches_async() {
         let config = Config::default();
-        let mut app = App::new(config);
+        let mut app = App::new(config, std::path::PathBuf::from("/tmp/test_config.toml"));
 
         // Add a test node
         app.nodes = vec![Node {
@@ -1608,7 +1712,7 @@ mod modal_tests {
     #[test]
     fn test_log_batch_deps_dispatch_async() {
         let config = Config::default();
-        let mut app = App::new(config);
+        let mut app = App::new(config, std::path::PathBuf::from("/tmp/test_config.toml"));
 
         // Add a test job
         app.jobs = vec![Job {
@@ -1661,7 +1765,7 @@ mod modal_tests {
     #[test]
     fn test_open_job_info_dispatches_async() {
         let config = Config::default();
-        let mut app = App::new(config);
+        let mut app = App::new(config, std::path::PathBuf::from("/tmp/test_config.toml"));
 
         // Add a test job
         app.jobs = vec![Job {
@@ -1699,7 +1803,7 @@ mod modal_tests {
         use crate::views::modals::job_actions::JobActionState;
 
         let config = Config::default();
-        let mut app = App::new(config);
+        let mut app = App::new(config, std::path::PathBuf::from("/tmp/test_config.toml"));
 
         // Add a test job
         let job = Job {
@@ -1729,5 +1833,63 @@ mod modal_tests {
 
         // The test passes if we don't hang here - resolve_first_node would block
         // on a real cluster if it were called synchronously
+    }
+
+    #[test]
+    fn test_copy_modal_uses_label() {
+        use crate::views::detail::job_detail::JobDetailScreen;
+        use std::collections::HashMap;
+
+        let config = Config::default();
+        let mut app = App::new(config, std::path::PathBuf::from("/tmp/test_config.toml"));
+
+        // Create a job detail modal
+        let job = Job {
+            job_id: "12345".to_string(),
+            name: "test_job".to_string(),
+            user: "alice".to_string(),
+            state: "RUNNING".to_string(),
+            partition: "gpu".to_string(),
+            nodes: "1".to_string(),
+            num_nodes: "1".to_string(),
+            num_cpus: "4".to_string(),
+            time_used: "1:23:45".to_string(),
+            time_limit: "10:00:00".to_string(),
+            reason: "".to_string(),
+            nodelist: "node01".to_string(),
+            qos: "normal".to_string(),
+        };
+        let detail = HashMap::new();
+        let screen = JobDetailScreen::new(job.job_id.clone(), detail);
+        app.modal = Modal::JobDetail(screen);
+
+        // Note: Actual copy testing would require mocking clipboard which we skip
+        // This test just verifies the modal has a label method
+        if let Modal::JobDetail(ref s) = app.modal {
+            let label = s.label();
+            assert!(label.contains("12345"));
+        }
+    }
+
+    #[test]
+    fn test_log_viewer_has_required_methods() {
+        use crate::views::detail::log_viewer::LogViewerScreen;
+
+        // Verify LogViewerScreen has the methods needed for follow mode
+        let viewer = LogViewerScreen::new(
+            "12345".to_string(),
+            "/tmp/test.log".to_string(),
+            "stdout".to_string(),
+            "initial content".to_string(),
+        );
+
+        // Test getters exist
+        assert_eq!(viewer.job_id(), "12345");
+        assert_eq!(viewer.path(), "/tmp/test.log");
+        assert_eq!(viewer.log_type(), "stdout");
+        assert!(viewer.is_following()); // default is true
+
+        // Test update_content exists (can't test without mut)
+        // The method is wired in request_refresh when is_following() is true
     }
 }

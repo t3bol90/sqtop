@@ -8,8 +8,6 @@
 //! are mutated by save() / update(). Persisted writes are atomic via a same-
 //! directory temp file plus fs::rename().
 
-#![allow(dead_code)]
-
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

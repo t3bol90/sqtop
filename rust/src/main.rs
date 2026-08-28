@@ -49,7 +49,7 @@ fn main() -> Result<()> {
         execute!(stdout, EnterAlternateScreen)?;
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
-        app::run(&mut terminal, settings)
+        app::run(&mut terminal, settings, config_path)
     })();
 
     // Always restore terminal, even on error - best effort, never masks the real error

@@ -58,6 +58,8 @@ impl VisualSelection {
     /// Update the cursor position while visual mode is active.
     ///
     /// This extends the selection range. Has no effect if visual mode is inactive.
+    #[cfg(test)]
+    #[cfg(test)]
     pub fn set_cursor(&mut self, row: usize) {
         if self.active {
             self.cursor = Some(row);
@@ -90,6 +92,8 @@ impl VisualSelection {
     /// No-op when row_count == 0 or visual mode is inactive.
     ///
     /// Matches Python `_move_visual_cursor(absolute=...)`.
+    #[cfg(test)]
+    #[cfg(test)]
     pub fn move_cursor_to(&mut self, absolute: usize, row_count: usize) {
         if !self.active || row_count == 0 {
             return;
@@ -127,6 +131,8 @@ impl VisualSelection {
     }
 
     /// Get the current anchor row, if any.
+    #[cfg(test)]
+    #[cfg(test)]
     pub fn anchor(&self) -> Option<usize> {
         self.anchor
     }

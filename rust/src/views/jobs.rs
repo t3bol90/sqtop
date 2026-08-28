@@ -6,7 +6,7 @@
 //! - Cyclic cursor state
 //! - Rendering with ratatui
 
-use crate::columns::{jobs_columns, move_in_order, reconcile_order};
+use crate::columns::{jobs_columns, reconcile_order};
 use crate::config::Config;
 use crate::responsive::{
     allocate_columns, tier_for, ColumnSpec, TOO_SMALL_HEIGHT, TOO_SMALL_WIDTH,
@@ -120,6 +120,7 @@ impl JobsView {
     }
 
     /// Set the search query.
+    #[cfg(test)]
     pub fn set_search_query(&mut self, query: String) {
         self.search_query = query;
     }
@@ -144,11 +145,6 @@ impl JobsView {
         self.sort_col = None;
         self.sort_reversed = false;
     }
-
-    /// Move a column in the order.
-    pub fn move_column(&mut self, name: &str, before: Option<&str>) {
-        self.column_order = move_in_order(&self.column_order, name, before);
-    }
     /// Cycle the reorder target to the next visible column (wraps).
     pub fn cycle_reorder_target(&mut self) {
         let visible_count = self.column_widths.len();
@@ -169,6 +165,8 @@ impl JobsView {
 
     /// Shift the targeted column left in the absolute column_order.
     pub fn shift_column_left(&mut self) {
+        use crate::columns::move_in_order;
+
         let visible = self.visible_column_names();
         if visible.is_empty() || self.reorder_target_idx >= visible.len() {
             return;
@@ -180,8 +178,9 @@ impl JobsView {
         let abs_idx = self.column_order.iter().position(|n| n == target_name);
         if let Some(idx) = abs_idx {
             if idx > 0 {
-                // Move left in absolute order
-                self.column_order.swap(idx, idx - 1);
+                // Move before the predecessor
+                let before = self.column_order.get(idx - 1).map(|s| s.as_str());
+                self.column_order = move_in_order(&self.column_order, target_name, before);
                 // Clamp target index
                 if self.reorder_target_idx > 0 {
                     self.reorder_target_idx -= 1;
@@ -192,6 +191,8 @@ impl JobsView {
 
     /// Shift the targeted column right in the absolute column_order.
     pub fn shift_column_right(&mut self) {
+        use crate::columns::move_in_order;
+
         let visible = self.visible_column_names();
         if visible.is_empty() || self.reorder_target_idx >= visible.len() {
             return;
@@ -203,8 +204,9 @@ impl JobsView {
         let abs_idx = self.column_order.iter().position(|n| n == target_name);
         if let Some(idx) = abs_idx {
             if idx < self.column_order.len() - 1 {
-                // Move right in absolute order
-                self.column_order.swap(idx, idx + 1);
+                // Move before the item two positions ahead (or None for end)
+                let before = self.column_order.get(idx + 2).map(|s| s.as_str());
+                self.column_order = move_in_order(&self.column_order, target_name, before);
                 // Clamp target index
                 self.reorder_target_idx = (self.reorder_target_idx + 1).min(visible.len() - 1);
             }
@@ -276,11 +278,7 @@ impl JobsView {
 
     /// Capture current cursor state for restoration.
     pub fn capture_state(&self) -> CapturedState {
-        let anchor = self
-            .table_state
-            .selected()
-            .and_then(|idx| self.last_jobs.get(idx))
-            .map(|j| j.job_id.clone());
+        let anchor = self.selected_job().map(|j| j.job_id.clone());
         CapturedState { anchor }
     }
 
@@ -441,7 +439,7 @@ impl JobsView {
                 (KeyCode::Esc, KeyModifiers::NONE) => {
                     // Exit search input mode and clear query
                     self.search_input_active = false;
-                    self.search_query.clear();
+                    self.clear_search();
                     return true;
                 }
                 _ => return false,

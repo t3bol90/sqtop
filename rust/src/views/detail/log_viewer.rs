@@ -201,6 +201,21 @@ impl LogViewerScreen {
     }
 
     /// Check if follow mode is enabled.
+    /// Get the job ID.
+    pub fn job_id(&self) -> &str {
+        &self.job_id
+    }
+
+    /// Get the log file path.
+    pub fn path(&self) -> &str {
+        &self.log_path
+    }
+
+    /// Get the log type ("stdout" or "stderr").
+    pub fn log_type(&self) -> &str {
+        &self.log_type
+    }
+
     pub fn is_following(&self) -> bool {
         self.follow
     }
