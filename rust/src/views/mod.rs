@@ -16,6 +16,7 @@ pub mod health;
 pub mod history;
 pub mod investigate;
 pub mod jobs;
+pub mod modals;
 pub mod nodes;
 pub mod partitions;
 pub mod table_state;

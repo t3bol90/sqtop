@@ -321,6 +321,34 @@ impl JobsView {
     pub fn cursor_prev(&mut self) {
         self.table_state.prev();
     }
+
+    /// Get the filtered jobs list (post-filter, pre-render).
+    pub fn filtered_jobs<'a>(&self, jobs: &'a [Job]) -> Vec<&'a Job> {
+        // Return references to jobs in last_jobs order
+        self.last_jobs
+            .iter()
+            .filter_map(|j| jobs.iter().find(|jj| jj.job_id == j.job_id))
+            .collect()
+    }
+
+    /// Get the cursor row index.
+    pub fn cursor_row(&self) -> usize {
+        self.table_state.selected().unwrap_or(0)
+    }
+
+    /// Get selected jobs (visual mode selection).
+    pub fn selected_jobs<'a>(&self, _jobs: &'a [Job]) -> Vec<&'a Job> {
+        // For now, return empty - visual mode not yet ported
+        // TODO: implement visual mode
+        vec![]
+    }
+
+    /// Get selection count.
+    pub fn selection_count(&self) -> usize {
+        // For now, return 0 - visual mode not yet ported
+        // TODO: implement visual mode
+        0
+    }
 }
 
 /// Captured state for restore after update.
