@@ -20,6 +20,7 @@ pub mod modals;
 pub mod nodes;
 pub mod partitions;
 pub mod table_state;
+pub mod visual;
 
 use crate::app::App;
 use ratatui::layout::Rect;
