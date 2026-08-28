@@ -5,5 +5,6 @@
 
 pub mod exec;
 pub mod fetch;
+pub mod investigate;
 pub mod model;
 pub mod parse;
