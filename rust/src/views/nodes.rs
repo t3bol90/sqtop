@@ -58,8 +58,10 @@ pub struct NodesView {
     reorder_target_idx: usize,
     /// Cyclic table cursor state.
     table_state: CyclicTableState,
+    /// Visual selection state.
+    pub visual_selection: crate::views::visual::VisualSelection,
     /// Last filtered and sorted nodes (for cursor restoration).
-    last_sorted_nodes: Vec<Node>,
+    pub last_sorted_nodes: Vec<Node>,
     /// Last current columns (name, width) for rendering.
     current_cols: Vec<(String, u16)>,
     /// Rebuild cache: width used for last column rebuild.
@@ -94,6 +96,7 @@ impl NodesView {
             column_order,
             reorder_target_idx: 0,
             table_state: CyclicTableState::new(),
+            visual_selection: crate::views::visual::VisualSelection::new(),
             last_sorted_nodes: Vec::new(),
             current_cols: Vec::new(),
             rebuild_cache_width: 0,
@@ -268,11 +271,96 @@ impl NodesView {
             self.sort_reversed = false;
         }
     }
+    /// Cycle the reorder target to the next visible column (wraps).
+    pub fn cycle_reorder_target(&mut self) {
+        let visible_count = self.current_cols.len();
+        if visible_count > 0 {
+            self.reorder_target_idx = (self.reorder_target_idx + 1) % visible_count;
+        }
+    }
+
+    /// Shift the targeted column left in the absolute column_order.
+    pub fn shift_column_left(&mut self) {
+        if self.current_cols.is_empty() || self.reorder_target_idx >= self.current_cols.len() {
+            return;
+        }
+
+        let target_name = &self.current_cols[self.reorder_target_idx].0;
+
+        // Find position in absolute column_order
+        let abs_idx = self.column_order.iter().position(|n| n == target_name);
+        if let Some(idx) = abs_idx {
+            if idx > 0 {
+                // Move left in absolute order
+                self.column_order.swap(idx, idx - 1);
+                // Clamp target index
+                if self.reorder_target_idx > 0 {
+                    self.reorder_target_idx -= 1;
+                }
+            }
+        }
+    }
+
+    /// Shift the targeted column right in the absolute column_order.
+    pub fn shift_column_right(&mut self) {
+        if self.current_cols.is_empty() || self.reorder_target_idx >= self.current_cols.len() {
+            return;
+        }
+
+        let target_name = &self.current_cols[self.reorder_target_idx].0;
+
+        // Find position in absolute column_order
+        let abs_idx = self.column_order.iter().position(|n| n == target_name);
+        if let Some(idx) = abs_idx {
+            if idx < self.column_order.len() - 1 {
+                // Move right in absolute order
+                self.column_order.swap(idx, idx + 1);
+                // Clamp target index
+                let visible_count = self.current_cols.len();
+                self.reorder_target_idx = (self.reorder_target_idx + 1).min(visible_count - 1);
+            }
+        }
+    }
 
     /// Handle key events for the Nodes view.
     ///
     /// Returns true if the key was handled, false otherwise.
     pub fn handle_key(&mut self, key: KeyEvent) -> bool {
+        // Visual mode keys
+        if self.visual_selection.is_active() {
+            match (key.code, key.modifiers) {
+                (KeyCode::Esc, KeyModifiers::NONE) => {
+                    self.visual_selection.exit();
+                    return true;
+                }
+                (KeyCode::Char('y'), KeyModifiers::NONE) => {
+                    // Yank handled at app level via status message
+                    return true;
+                }
+                (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
+                    let cursor_row = self.table_state.selected().unwrap_or(0);
+                    self.visual_selection
+                        .move_cursor(1, self.last_sorted_nodes.len(), cursor_row);
+                    // Also move table cursor to match visual cursor
+                    if let Some(vc) = self.visual_selection.cursor() {
+                        self.table_state.select(Some(vc));
+                    }
+                    return true;
+                }
+                (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
+                    let cursor_row = self.table_state.selected().unwrap_or(0);
+                    self.visual_selection
+                        .move_cursor(-1, self.last_sorted_nodes.len(), cursor_row);
+                    // Also move table cursor to match visual cursor
+                    if let Some(vc) = self.visual_selection.cursor() {
+                        self.table_state.select(Some(vc));
+                    }
+                    return true;
+                }
+                _ => {}
+            }
+        }
+
         match (key.code, key.modifiers) {
             (KeyCode::Char('f'), KeyModifiers::NONE) => {
                 self.cycle_state_filter();
@@ -290,12 +378,31 @@ impl NodesView {
                 self.set_sort("mem");
                 true
             }
+            (KeyCode::Char('v') | KeyCode::Char('V'), KeyModifiers::NONE) => {
+                // Enter visual mode at current cursor
+                if let Some(cursor_row) = self.table_state.selected() {
+                    self.visual_selection.enter(cursor_row);
+                }
+                true
+            }
             (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
                 self.table_state.next();
                 true
             }
             (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
                 self.table_state.prev();
+                true
+            }
+            (KeyCode::Char('.'), KeyModifiers::NONE) => {
+                self.cycle_reorder_target();
+                true
+            }
+            (KeyCode::Char('['), KeyModifiers::NONE) => {
+                self.shift_column_left();
+                true
+            }
+            (KeyCode::Char(']'), KeyModifiers::NONE) => {
+                self.shift_column_right();
                 true
             }
             _ => false,

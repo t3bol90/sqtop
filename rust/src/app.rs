@@ -172,6 +172,7 @@ pub struct App {
     pub jobs: Vec<Job>,
     pub nodes: Vec<Node>,
     pub partitions: Vec<ClusterSummary>,
+    pub partitions_table_state: crate::views::table_state::CyclicTableState,
     pub status: Option<String>,
     pub should_quit: bool,
     pub modal: Modal,
@@ -219,6 +220,7 @@ impl App {
             jobs: Vec::new(),
             nodes: Vec::new(),
             partitions: Vec::new(),
+            partitions_table_state: crate::views::table_state::CyclicTableState::new(),
             status: None,
             should_quit: false,
             modal: Modal::None,
@@ -244,7 +246,18 @@ impl App {
                     self.status = None;
                 }
                 Msg::Partitions(partitions) => {
+                    use crate::views::partitions::{capture_cursor_state, restore_cursor_position};
+                    // Capture cursor state before update
+                    let cursor_row = self.partitions_table_state.selected();
+                    let saved_row = cursor_row.unwrap_or(0);
+                    let state = capture_cursor_state(&self.partitions, cursor_row);
+                    // Update data
                     self.partitions = partitions;
+                    self.partitions_table_state
+                        .set_row_count(self.partitions.len());
+                    // Restore cursor position
+                    let new_row = restore_cursor_position(&state, &self.partitions, saved_row);
+                    self.partitions_table_state.select(new_row);
                     self.status = None;
                 }
                 Msg::History(sacct_jobs) => {
@@ -709,7 +722,7 @@ impl App {
                                 // Get selected job IDs from jobs_view
                                 let job_ids: Vec<String> = self
                                     .jobs_view
-                                    .selected_jobs(&self.jobs)
+                                    .selected_jobs()
                                     .iter()
                                     .map(|j| j.job_id.clone())
                                     .collect();
@@ -1020,6 +1033,90 @@ impl App {
                 }
                 true
             }
+            // Jobs tab: y for yank (visual selection)
+            (KeyCode::Char('y'), KeyModifiers::NONE)
+                if self.tab == Tab::Jobs && self.jobs_view.visual_selection.is_active() =>
+            {
+                use crate::views::visual::yank_tsv;
+                let rows = self.jobs_view.visual_selection.rows();
+                let text = yank_tsv(&rows, &self.jobs_view.last_jobs, |job| {
+                    format!("{}	{}	{}	{}", job.job_id, job.name, job.state, job.user)
+                });
+                let remote_host = if self.config.remote.host.is_empty() {
+                    None
+                } else {
+                    Some(self.config.remote.host.as_str())
+                };
+                let result = crate::clipboard::copy(&text, &self.config.clipboard, remote_host);
+                if result.ok {
+                    let count = rows.len();
+                    self.status = Some(format!(
+                        "Copied {} row{}",
+                        count,
+                        if count == 1 { "" } else { "s" }
+                    ));
+                } else {
+                    self.status = Some("Copy failed".to_string());
+                }
+                // Exit visual mode after yank
+                self.jobs_view.visual_selection.exit();
+                true
+            }
+            // Nodes tab: y for yank (visual selection)
+            (KeyCode::Char('y'), KeyModifiers::NONE)
+                if self.tab == Tab::Nodes && self.nodes_view.visual_selection.is_active() =>
+            {
+                use crate::views::visual::yank_tsv;
+                let rows = self.nodes_view.visual_selection.rows();
+                let text = yank_tsv(&rows, &self.nodes_view.last_sorted_nodes, |node| {
+                    format!("{}	{}	{}", node.name, node.state, node.partition)
+                });
+                let remote_host = if self.config.remote.host.is_empty() {
+                    None
+                } else {
+                    Some(self.config.remote.host.as_str())
+                };
+                let result = crate::clipboard::copy(&text, &self.config.clipboard, remote_host);
+                if result.ok {
+                    let count = rows.len();
+                    self.status = Some(format!(
+                        "Copied {} row{}",
+                        count,
+                        if count == 1 { "" } else { "s" }
+                    ));
+                } else {
+                    self.status = Some("Copy failed".to_string());
+                }
+                // Exit visual mode after yank
+                self.nodes_view.visual_selection.exit();
+                true
+            }
+            // Detail screen copy (ctrl+shift+y)
+            (KeyCode::Char('y'), KeyModifiers::CONTROL | KeyModifiers::SHIFT)
+            | (KeyCode::Char('Y'), KeyModifiers::CONTROL) => {
+                let text: Option<String> = match &self.modal {
+                    Modal::JobInfo(s) => Some(s.plain_text().to_string()),
+                    Modal::JobDetail(s) => Some(s.plain_text().to_string()),
+                    Modal::NodeDetail(s) => Some(s.plain_text().to_string()),
+                    Modal::BatchScript(s) => Some(s.content().to_string()),
+                    Modal::LogViewer(s) => Some(s.content().to_string()),
+                    _ => None,
+                };
+                if let Some(text) = text {
+                    let remote_host = if self.config.remote.host.is_empty() {
+                        None
+                    } else {
+                        Some(self.config.remote.host.as_str())
+                    };
+                    let result = crate::clipboard::copy(&text, &self.config.clipboard, remote_host);
+                    if result.ok {
+                        self.status = Some("Copied pane content".to_string());
+                    } else {
+                        self.status = Some("Copy failed".to_string());
+                    }
+                }
+                true
+            }
             // Jobs tab: B for bulk actions
             (KeyCode::Char('B'), KeyModifiers::NONE) if self.tab == Tab::Jobs => {
                 let selected_count = self.jobs_view.selection_count();
@@ -1041,7 +1138,22 @@ impl App {
                         let current_user = std::env::var("USER").unwrap_or_default();
                         self.history_view.handle_key(key_event, &current_user)
                     }
-                    Tab::Partitions | Tab::Health => false, // No view-level keys yet
+                    Tab::Partitions => {
+                        // Basic cursor navigation for partitions
+                        use crossterm::event::{KeyCode, KeyModifiers};
+                        match (key_event.code, key_event.modifiers) {
+                            (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
+                                self.partitions_table_state.next();
+                                true
+                            }
+                            (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
+                                self.partitions_table_state.prev();
+                                true
+                            }
+                            _ => false,
+                        }
+                    }
+                    Tab::Health => false, // No view-level keys yet
                 }
             }
         }

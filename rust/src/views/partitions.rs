@@ -152,7 +152,7 @@ pub fn restore_cursor_position(
 }
 
 /// Render the partitions table.
-pub fn render(f: &mut ratatui::Frame, app: &App, area: Rect) {
+pub fn render(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     // Check for too-small area (would panic in ratatui's constraint solver)
     if area.width < 10 || area.height < 3 {
         let block = Block::default()
@@ -239,8 +239,12 @@ pub fn render(f: &mut ratatui::Frame, app: &App, area: Rect) {
         .block(Block::default().borders(Borders::ALL).title(title))
         .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
-    // Render without state for now (cursor management will be added by integration)
-    f.render_widget(table, area);
+    // Render with stateful cursor
+    let mut ratatui_state = ratatui::widgets::TableState::default();
+    if let Some(selected) = app.partitions_table_state.selected() {
+        ratatui_state.select(Some(selected));
+    }
+    f.render_stateful_widget(table, area, &mut ratatui_state);
 }
 
 #[cfg(test)]
@@ -472,14 +476,14 @@ mod tests {
     #[test]
     fn test_render_empty_partitions() {
         let config = Config::default();
-        let app = App::new(config);
+        let mut app = App::new(config);
 
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
                 let area = f.area();
-                render(f, &app, area);
+                render(f, &mut app, area);
             })
             .unwrap();
 
@@ -489,14 +493,14 @@ mod tests {
     #[test]
     fn test_render_too_small_area() {
         let config = Config::default();
-        let app = App::new(config);
+        let mut app = App::new(config);
 
         let backend = TestBackend::new(8, 2);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|f| {
                 let area = f.area();
-                render(f, &app, area);
+                render(f, &mut app, area);
             })
             .unwrap();
 
@@ -517,7 +521,7 @@ mod tests {
         terminal
             .draw(|f| {
                 let area = f.area();
-                render(f, &app, area);
+                render(f, &mut app, area);
             })
             .unwrap();
 
@@ -539,7 +543,7 @@ mod tests {
         terminal
             .draw(|f| {
                 let area = f.area();
-                render(f, &app, area);
+                render(f, &mut app, area);
             })
             .unwrap();
 

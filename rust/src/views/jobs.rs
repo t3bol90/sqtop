@@ -51,6 +51,8 @@ pub struct JobsView {
     pub filter_mine: bool,
     /// Search query (case-insensitive substring match)
     pub search_query: String,
+    /// Whether search input is active (user is typing)
+    pub search_input_active: bool,
     /// Sort column name, or None for default state-priority sort
     pub sort_col: Option<String>,
     /// Reverse sort order
@@ -59,8 +61,12 @@ pub struct JobsView {
     pub column_order: Vec<String>,
     /// Current column widths
     pub column_widths: HashMap<String, u16>,
+    /// Reorder target column index (in visible-column space)
+    pub reorder_target_idx: usize,
     /// Table cursor state
     pub table_state: CyclicTableState,
+    /// Visual selection state
+    pub visual_selection: crate::views::visual::VisualSelection,
     /// Last filtered/sorted jobs (for row lookups)
     pub last_jobs: Vec<Job>,
     /// Last unfiltered jobs (raw from app)
@@ -79,11 +85,14 @@ impl JobsView {
         Self {
             filter_mine: false,
             search_query: String::new(),
+            search_input_active: false,
             sort_col: None,
             sort_reversed: false,
             column_order: Vec::new(),
             column_widths: HashMap::new(),
+            reorder_target_idx: 0,
             table_state: CyclicTableState::new(),
+            visual_selection: crate::views::visual::VisualSelection::new(),
             last_jobs: Vec::new(),
             last_jobs_raw: Vec::new(),
         }
@@ -139,6 +148,67 @@ impl JobsView {
     /// Move a column in the order.
     pub fn move_column(&mut self, name: &str, before: Option<&str>) {
         self.column_order = move_in_order(&self.column_order, name, before);
+    }
+    /// Cycle the reorder target to the next visible column (wraps).
+    pub fn cycle_reorder_target(&mut self) {
+        let visible_count = self.column_widths.len();
+        if visible_count > 0 {
+            self.reorder_target_idx = (self.reorder_target_idx + 1) % visible_count;
+        }
+    }
+
+    /// Get the list of currently visible column names (in order).
+    fn visible_column_names(&self) -> Vec<String> {
+        // Return columns in the order they appear in column_order, filtered by visibility
+        self.column_order
+            .iter()
+            .filter(|name| self.column_widths.contains_key(*name))
+            .cloned()
+            .collect()
+    }
+
+    /// Shift the targeted column left in the absolute column_order.
+    pub fn shift_column_left(&mut self) {
+        let visible = self.visible_column_names();
+        if visible.is_empty() || self.reorder_target_idx >= visible.len() {
+            return;
+        }
+
+        let target_name = &visible[self.reorder_target_idx];
+
+        // Find position in absolute column_order
+        let abs_idx = self.column_order.iter().position(|n| n == target_name);
+        if let Some(idx) = abs_idx {
+            if idx > 0 {
+                // Move left in absolute order
+                self.column_order.swap(idx, idx - 1);
+                // Clamp target index
+                if self.reorder_target_idx > 0 {
+                    self.reorder_target_idx -= 1;
+                }
+            }
+        }
+    }
+
+    /// Shift the targeted column right in the absolute column_order.
+    pub fn shift_column_right(&mut self) {
+        let visible = self.visible_column_names();
+        if visible.is_empty() || self.reorder_target_idx >= visible.len() {
+            return;
+        }
+
+        let target_name = &visible[self.reorder_target_idx];
+
+        // Find position in absolute column_order
+        let abs_idx = self.column_order.iter().position(|n| n == target_name);
+        if let Some(idx) = abs_idx {
+            if idx < self.column_order.len() - 1 {
+                // Move right in absolute order
+                self.column_order.swap(idx, idx + 1);
+                // Clamp target index
+                self.reorder_target_idx = (self.reorder_target_idx + 1).min(visible.len() - 1);
+            }
+        }
     }
 
     /// Apply the filter pipeline: mine -> search -> sort.
@@ -337,23 +407,83 @@ impl JobsView {
     }
 
     /// Get selected jobs (visual mode selection).
-    pub fn selected_jobs<'a>(&self, _jobs: &'a [Job]) -> Vec<&'a Job> {
-        // For now, return empty - visual mode not yet ported
-        // TODO: implement visual mode
-        vec![]
+    pub fn selected_jobs(&self) -> Vec<&Job> {
+        let rows = self.visual_selection.rows();
+        rows.iter()
+            .filter_map(|&idx| self.last_jobs.get(idx))
+            .collect()
     }
 
     /// Get selection count.
     pub fn selection_count(&self) -> usize {
-        // For now, return 0 - visual mode not yet ported
-        // TODO: implement visual mode
-        0
+        self.visual_selection.rows().len()
     }
 
     /// Handle key input for the jobs view.
     pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
         use crossterm::event::{KeyCode, KeyModifiers};
 
+        // If search input is active, handle search keys first
+        if self.search_input_active {
+            match (key.code, key.modifiers) {
+                (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+                    self.search_query.push(c);
+                    return true;
+                }
+                (KeyCode::Backspace, KeyModifiers::NONE) => {
+                    self.search_query.pop();
+                    return true;
+                }
+                (KeyCode::Enter, KeyModifiers::NONE) => {
+                    // Accept search and stay in input mode
+                    return true;
+                }
+                (KeyCode::Esc, KeyModifiers::NONE) => {
+                    // Exit search input mode and clear query
+                    self.search_input_active = false;
+                    self.search_query.clear();
+                    return true;
+                }
+                _ => return false,
+            }
+        }
+
+        // Visual mode keys
+        if self.visual_selection.is_active() {
+            match (key.code, key.modifiers) {
+                (KeyCode::Esc, KeyModifiers::NONE) => {
+                    self.visual_selection.exit();
+                    return true;
+                }
+                (KeyCode::Char('y'), KeyModifiers::NONE) => {
+                    // Yank handled at app level via status message
+                    return true;
+                }
+                (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
+                    let cursor_row = self.table_state.selected().unwrap_or(0);
+                    self.visual_selection
+                        .move_cursor(1, self.last_jobs.len(), cursor_row);
+                    // Also move table cursor to match visual cursor
+                    if let Some(vc) = self.visual_selection.cursor() {
+                        self.table_state.select(Some(vc));
+                    }
+                    return true;
+                }
+                (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
+                    let cursor_row = self.table_state.selected().unwrap_or(0);
+                    self.visual_selection
+                        .move_cursor(-1, self.last_jobs.len(), cursor_row);
+                    // Also move table cursor to match visual cursor
+                    if let Some(vc) = self.visual_selection.cursor() {
+                        self.table_state.select(Some(vc));
+                    }
+                    return true;
+                }
+                _ => {}
+            }
+        }
+
+        // Normal mode keys
         match (key.code, key.modifiers) {
             (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
                 self.cursor_next();
@@ -368,8 +498,15 @@ impl JobsView {
                 true
             }
             (KeyCode::Char('/'), KeyModifiers::NONE) => {
-                // Search prompt would go here - for now just clear
-                self.clear_search();
+                // Enter search input mode
+                self.search_input_active = true;
+                true
+            }
+            (KeyCode::Char('v') | KeyCode::Char('V'), KeyModifiers::NONE) => {
+                // Enter visual mode at current cursor
+                if let Some(cursor_row) = self.table_state.selected() {
+                    self.visual_selection.enter(cursor_row);
+                }
                 true
             }
             (KeyCode::Char('s'), KeyModifiers::NONE) => {
@@ -378,6 +515,18 @@ impl JobsView {
             }
             (KeyCode::Char('S'), KeyModifiers::SHIFT) => {
                 self.clear_sort();
+                true
+            }
+            (KeyCode::Char('.'), KeyModifiers::NONE) => {
+                self.cycle_reorder_target();
+                true
+            }
+            (KeyCode::Char('['), KeyModifiers::NONE) => {
+                self.shift_column_left();
+                true
+            }
+            (KeyCode::Char(']'), KeyModifiers::NONE) => {
+                self.shift_column_right();
                 true
             }
             _ => false,
@@ -547,14 +696,16 @@ pub fn render(
     let mut header_cells = Vec::new();
     let cols_to_render: Vec<String> = view.column_widths.keys().cloned().collect();
 
-    for col_name in &cols_to_render {
-        header_cells.push(
-            Cell::from(col_name.as_str()).style(
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        );
+    for (idx, col_name) in cols_to_render.iter().enumerate() {
+        let style = if idx == view.reorder_target_idx {
+            // Highlight the reorder target column
+            Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+        } else {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        };
+        header_cells.push(Cell::from(col_name.as_str()).style(style));
     }
     let header = Row::new(header_cells).height(1);
 
@@ -1143,5 +1294,228 @@ mod tests {
 
         // Job 2 should still be selected, but now at index 2
         assert_eq!(view.selected_job().unwrap().job_id, "2");
+    }
+
+    #[test]
+    fn test_search_input_mode() {
+        let mut view = JobsView::new();
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        // Enter search mode with /
+        let key = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE);
+        assert!(view.handle_key(key));
+        assert!(view.search_input_active);
+        assert_eq!(view.search_query, "");
+
+        // Type "test"
+        for c in ['t', 'e', 's', 't'] {
+            let key = KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE);
+            assert!(view.handle_key(key));
+        }
+        assert_eq!(view.search_query, "test");
+
+        // Escape clears and exits
+        let key = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        assert!(view.handle_key(key));
+        assert!(!view.search_input_active);
+        assert_eq!(view.search_query, "");
+    }
+
+    #[test]
+    fn test_visual_mode_selection() {
+        let jobs = vec![
+            make_job("1", "job1", "alice", "RUNNING", "compute", "", "", "normal"),
+            make_job("2", "job2", "alice", "PENDING", "compute", "", "", "normal"),
+            make_job("3", "job3", "alice", "FAILED", "compute", "", "", "normal"),
+        ];
+
+        let mut view = JobsView::new();
+        view.update(jobs, "alice");
+        view.table_state.select(Some(0));
+
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        // Enter visual mode with 'v'
+        let key = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE);
+        assert!(view.handle_key(key));
+        assert!(view.visual_selection.is_active());
+
+        // Press 'j' to move down and extend selection
+        let key = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        assert!(view.handle_key(key));
+
+        // Should have selected rows 0 and 1
+        let selected = view.selected_jobs();
+        assert_eq!(selected.len(), 2);
+        assert_eq!(selected[0].job_id, "1");
+        assert_eq!(selected[1].job_id, "2");
+    }
+
+    #[test]
+    fn test_yank_tsv() {
+        use crate::views::visual::yank_tsv;
+        use std::collections::BTreeSet;
+
+        let jobs = vec![
+            make_job("1", "job1", "alice", "RUNNING", "compute", "", "", "normal"),
+            make_job("2", "job2", "bob", "PENDING", "gpu", "", "", "high"),
+        ];
+
+        let mut rows = BTreeSet::new();
+        rows.insert(0);
+        rows.insert(1);
+
+        let text = yank_tsv(&rows, &jobs, |job| {
+            format!("{}\t{}\t{}\t{}", job.job_id, job.name, job.state, job.user)
+        });
+
+        let expected = "1\tjob1\tRUNNING\talice\n2\tjob2\tPENDING\tbob\n";
+        assert_eq!(text, expected);
+    }
+
+    #[test]
+    fn test_clipboard_copy_remote() {
+        use crate::clipboard::copy;
+        use crate::config::Config;
+
+        let config = Config::default();
+        let text = "test data";
+
+        // With remote host, should use OSC52 transport
+        let result = copy(text, &config.clipboard, Some("remote.example.com"));
+        // Should attempt OSC52 and not fall back to subprocess
+        assert_eq!(result.transport, crate::clipboard::Transport::Osc52);
+    }
+
+    #[test]
+    fn test_cycle_reorder_target_wraps() {
+        let mut view = JobsView::new();
+        view.column_widths.insert("A".to_string(), 10);
+        view.column_widths.insert("B".to_string(), 10);
+        view.column_widths.insert("C".to_string(), 10);
+
+        assert_eq!(view.reorder_target_idx, 0);
+        view.cycle_reorder_target();
+        assert_eq!(view.reorder_target_idx, 1);
+        view.cycle_reorder_target();
+        assert_eq!(view.reorder_target_idx, 2);
+        view.cycle_reorder_target();
+        // Should wrap back to 0
+        assert_eq!(view.reorder_target_idx, 0);
+    }
+
+    #[test]
+    fn test_cycle_reorder_target_zero_columns() {
+        let mut view = JobsView::new();
+        // No columns
+        assert_eq!(view.column_widths.len(), 0);
+        view.cycle_reorder_target();
+        // Should not panic and idx should remain 0
+        assert_eq!(view.reorder_target_idx, 0);
+    }
+
+    #[test]
+    fn test_shift_column_right_and_left() {
+        let mut view = JobsView::new();
+        view.column_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        view.column_widths.insert("A".to_string(), 10);
+        view.column_widths.insert("B".to_string(), 10);
+        view.column_widths.insert("C".to_string(), 10);
+
+        // Target first column (A) at idx 0
+        view.reorder_target_idx = 0;
+
+        // Shift right: A should move to position 1
+        view.shift_column_right();
+        assert_eq!(
+            view.column_order,
+            vec!["B".to_string(), "A".to_string(), "C".to_string()]
+        );
+        assert_eq!(view.reorder_target_idx, 1);
+
+        // Shift left: A should move back to position 0
+        view.shift_column_left();
+        assert_eq!(
+            view.column_order,
+            vec!["A".to_string(), "B".to_string(), "C".to_string()]
+        );
+        assert_eq!(view.reorder_target_idx, 0);
+    }
+
+    #[test]
+    fn test_shift_at_edges_clamps() {
+        let mut view = JobsView::new();
+        view.column_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+        view.column_widths.insert("A".to_string(), 10);
+        view.column_widths.insert("B".to_string(), 10);
+        view.column_widths.insert("C".to_string(), 10);
+
+        // Target first column
+        view.reorder_target_idx = 0;
+        let initial_order = view.column_order.clone();
+
+        // Try to shift left at left edge
+        view.shift_column_left();
+        // Should not move past the start
+        assert_eq!(view.column_order, initial_order);
+        assert_eq!(view.reorder_target_idx, 0);
+
+        // Target last column
+        view.reorder_target_idx = 2;
+        let order_before = view.column_order.clone();
+
+        // Try to shift right at right edge
+        view.shift_column_right();
+        // Should not move past the end
+        assert_eq!(view.column_order, order_before);
+        assert_eq!(view.reorder_target_idx, 2);
+    }
+
+    #[test]
+    fn test_reorder_target_visible_space_only() {
+        let mut view = JobsView::new();
+
+        // Set up column order with A, B, C
+        view.column_order = vec!["A".to_string(), "B".to_string(), "C".to_string()];
+
+        // Only A and C are visible (B is hidden by having no width)
+        view.column_widths.insert("A".to_string(), 10);
+        view.column_widths.insert("C".to_string(), 10);
+        // B has no width (hidden)
+
+        // Reorder target is in visible-space: idx 0 = A, idx 1 = C
+        view.reorder_target_idx = 0;
+        assert_eq!(view.visible_column_names().len(), 2);
+
+        // Cycling should only iterate over visible columns
+        view.cycle_reorder_target();
+        assert_eq!(view.reorder_target_idx, 1);
+        view.cycle_reorder_target();
+        assert_eq!(view.reorder_target_idx, 0); // Wraps back
+    }
+
+    #[test]
+    fn test_reorder_keys() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut view = JobsView::new();
+        view.column_widths.insert("A".to_string(), 10);
+        view.column_widths.insert("B".to_string(), 10);
+
+        // Test '.' key
+        let key = KeyEvent::new(KeyCode::Char('.'), KeyModifiers::NONE);
+        assert!(view.handle_key(key));
+        assert_eq!(view.reorder_target_idx, 1);
+
+        // Test '[' key (will be no-op at position 1 since we need column_order set up)
+        view.column_order = vec!["A".to_string(), "B".to_string()];
+        view.reorder_target_idx = 1;
+        let key = KeyEvent::new(KeyCode::Char('['), KeyModifiers::NONE);
+        assert!(view.handle_key(key));
+
+        // Test ']' key
+        view.reorder_target_idx = 0;
+        let key = KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE);
+        assert!(view.handle_key(key));
     }
 }

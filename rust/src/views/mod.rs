@@ -47,7 +47,7 @@ pub fn render_nodes(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 }
 
 /// Render the Partitions tab.
-pub fn render_partitions(f: &mut ratatui::Frame, app: &App, area: Rect) {
+pub fn render_partitions(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     partitions::render(f, app, area);
 }
 
