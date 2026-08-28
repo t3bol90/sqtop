@@ -349,6 +349,40 @@ impl JobsView {
         // TODO: implement visual mode
         0
     }
+
+    /// Handle key input for the jobs view.
+    pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        match (key.code, key.modifiers) {
+            (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
+                self.cursor_next();
+                true
+            }
+            (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
+                self.cursor_prev();
+                true
+            }
+            (KeyCode::Char('m'), KeyModifiers::NONE) => {
+                self.toggle_filter_mine();
+                true
+            }
+            (KeyCode::Char('/'), KeyModifiers::NONE) => {
+                // Search prompt would go here - for now just clear
+                self.clear_search();
+                true
+            }
+            (KeyCode::Char('s'), KeyModifiers::NONE) => {
+                self.toggle_sort("state");
+                true
+            }
+            (KeyCode::Char('S'), KeyModifiers::SHIFT) => {
+                self.clear_sort();
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Captured state for restore after update.

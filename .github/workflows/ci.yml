@@ -27,6 +27,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Clippy
+        # TODO(port): drop -A dead_code once every ported module is wired and reachable.
         run: cargo clippy --all-targets -- -D warnings -A dead_code
 
       - name: Run tests

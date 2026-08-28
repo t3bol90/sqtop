@@ -14,6 +14,7 @@ use ratatui::{
 
 /// Modal prompt for node expression override when attaching to a job.
 pub struct AttachPromptScreen {
+    pub job_id: String,
     default_node: String,
     input: String,
     title: String,
@@ -22,8 +23,9 @@ pub struct AttachPromptScreen {
 
 impl AttachPromptScreen {
     /// Create a new attach prompt with the default node.
-    pub fn new(default_node: String) -> Self {
+    pub fn new(job_id: String, default_node: String) -> Self {
         Self {
+            job_id,
             input: default_node.clone(),
             default_node,
             title: "Attach with node override".to_string(),
@@ -196,7 +198,7 @@ mod tests {
             default_command: "bash -l".to_string(),
             extra_args: "--mpi=none".to_string(),
         };
-        let mut screen = AttachPromptScreen::new("c1".to_string());
+        let mut screen = AttachPromptScreen::new("job123".to_string(), "c1".to_string());
         screen.input = "c2".to_string();
 
         let cmd = screen.build_command("12345", &config);
@@ -224,7 +226,7 @@ mod tests {
             default_command: "bash -l".to_string(),
             extra_args: "".to_string(),
         };
-        let mut screen = AttachPromptScreen::new("".to_string());
+        let mut screen = AttachPromptScreen::new("job123".to_string(), "".to_string());
         screen.input = "".to_string();
 
         let cmd = screen.build_command("12345", &config);
@@ -240,7 +242,7 @@ mod tests {
             default_command: "bash".to_string(),
             extra_args: "".to_string(),
         };
-        let mut screen = AttachPromptScreen::new("".to_string());
+        let mut screen = AttachPromptScreen::new("job123".to_string(), "".to_string());
         screen.input = "   ".to_string();
 
         let cmd = screen.build_command("12345", &config);
@@ -254,7 +256,7 @@ mod tests {
             default_command: "zsh -l".to_string(),
             extra_args: "".to_string(),
         };
-        let screen = AttachPromptScreen::new("".to_string());
+        let screen = AttachPromptScreen::new("job123".to_string(), "".to_string());
 
         let cmd = screen.build_command("12345", &config);
         assert!(cmd.contains(&"zsh".to_string()));
@@ -268,7 +270,7 @@ mod tests {
             default_command: "bash".to_string(),
             extra_args: "--exclusive --mpi=pmi2".to_string(),
         };
-        let screen = AttachPromptScreen::new("".to_string());
+        let screen = AttachPromptScreen::new("job123".to_string(), "".to_string());
 
         let cmd = screen.build_command("12345", &config);
         assert!(cmd.contains(&"--exclusive".to_string()));
@@ -277,7 +279,7 @@ mod tests {
 
     #[test]
     fn test_handle_key_enter_returns_value() {
-        let mut screen = AttachPromptScreen::new("node01".to_string());
+        let mut screen = AttachPromptScreen::new("job123".to_string(), "node01".to_string());
         screen.input = "node02".to_string();
 
         let outcome = screen.handle_key(KeyEvent::from(KeyCode::Enter));
@@ -286,14 +288,14 @@ mod tests {
 
     #[test]
     fn test_handle_key_esc_closes() {
-        let mut screen = AttachPromptScreen::new("".to_string());
+        let mut screen = AttachPromptScreen::new("job123".to_string(), "".to_string());
         let outcome = screen.handle_key(KeyEvent::from(KeyCode::Esc));
         assert_eq!(outcome, Outcome::Close);
     }
 
     #[test]
     fn test_handle_key_char_appends_to_input() {
-        let mut screen = AttachPromptScreen::new("".to_string());
+        let mut screen = AttachPromptScreen::new("job123".to_string(), "".to_string());
         screen.input.clear();
 
         screen.handle_key(KeyEvent::from(KeyCode::Char('c')));
@@ -303,7 +305,7 @@ mod tests {
 
     #[test]
     fn test_handle_key_backspace_removes_char() {
-        let mut screen = AttachPromptScreen::new("".to_string());
+        let mut screen = AttachPromptScreen::new("job123".to_string(), "".to_string());
         screen.input = "abc".to_string();
 
         screen.handle_key(KeyEvent::from(KeyCode::Backspace));

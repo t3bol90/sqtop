@@ -337,6 +337,16 @@ impl NodesView {
         self.render_table(f, table_area);
     }
 
+    /// Get the currently selected node.
+    /// Get the currently selected node.
+    pub fn current_node<'a>(&self, nodes: &'a [Node]) -> Option<&'a Node> {
+        let selected = self.table_state.selected()?;
+        // Use last_sorted_nodes to get the index, then find that node in the input
+        let node_in_sorted = self.last_sorted_nodes.get(selected)?;
+        // Find the same node in the input slice by name
+        nodes.iter().find(|n| n.name == node_in_sorted.name)
+    }
+
     /// Render the header line.
     fn render_header(
         &self,

@@ -1,10 +1,18 @@
 //! Application state and key dispatch.
 
 use crate::config::Config;
+use crate::investigation::{InvestigationReport, ReasonTable};
 use crate::slurm::exec::Runner;
 use crate::slurm::fetch;
+use crate::slurm::fetch::SacctJob;
 use crate::slurm::model::{ClusterSummary, Job, Node};
 use crate::views;
+use crate::views::detail::{
+    ArrayTaskScreen, AttachPromptScreen, BatchScriptScreen, DependencyScreen, JobDetailScreen,
+    JobInfoScreen, LogViewerScreen, NodeDetailScreen, Outcome as DetailOutcome,
+};
+use crate::views::history::HistoryView;
+use crate::views::investigate::InvestigationScreen;
 use crate::views::jobs::JobsView;
 use crate::views::nodes::NodesView;
 use anyhow::Result;
@@ -27,12 +35,20 @@ pub enum Tab {
     Jobs,
     Nodes,
     Partitions,
+    History,
+    Health,
 }
 
 impl Tab {
     /// All tabs in display order.
     pub fn all() -> &'static [Tab] {
-        &[Tab::Jobs, Tab::Nodes, Tab::Partitions]
+        &[
+            Tab::Jobs,
+            Tab::Nodes,
+            Tab::Partitions,
+            Tab::History,
+            Tab::Health,
+        ]
     }
 
     /// Tab title for display.
@@ -41,6 +57,8 @@ impl Tab {
             Tab::Jobs => "Jobs",
             Tab::Nodes => "Nodes",
             Tab::Partitions => "Partitions",
+            Tab::History => "History",
+            Tab::Health => "Health",
         }
     }
 
@@ -49,16 +67,20 @@ impl Tab {
         match self {
             Tab::Jobs => Tab::Nodes,
             Tab::Nodes => Tab::Partitions,
-            Tab::Partitions => Tab::Jobs,
+            Tab::Partitions => Tab::History,
+            Tab::History => Tab::Health,
+            Tab::Health => Tab::Jobs,
         }
     }
 
     /// Cycle to the previous tab.
     pub fn prev(self) -> Tab {
         match self {
-            Tab::Jobs => Tab::Partitions,
+            Tab::Jobs => Tab::Health,
             Tab::Nodes => Tab::Jobs,
             Tab::Partitions => Tab::Nodes,
+            Tab::History => Tab::Partitions,
+            Tab::Health => Tab::History,
         }
     }
 
@@ -68,6 +90,7 @@ impl Tab {
             Tab::Jobs => config.interval.jobs,
             Tab::Nodes => config.interval.nodes,
             Tab::Partitions => config.interval.partitions,
+            Tab::History | Tab::Health => config.interval.jobs, // Use same as jobs
         };
         Duration::from_secs_f64(seconds)
     }
@@ -84,7 +107,6 @@ enum PendingAction {
 }
 
 /// Modal overlay state. View workers will add variants as needed.
-#[derive(Debug)]
 pub enum Modal {
     /// No modal active.
     None,
@@ -98,6 +120,24 @@ pub enum Modal {
     ColumnToggle(crate::views::modals::column_toggle::ColumnToggleState),
     /// Keybindings help.
     KeybindingsHelp(crate::views::modals::keybindings_help::KeybindingsHelpState),
+    /// Job detail screen.
+    JobDetail(JobDetailScreen),
+    /// Batch script viewer.
+    BatchScript(BatchScriptScreen),
+    /// Log viewer (stdout/stderr).
+    LogViewer(LogViewerScreen),
+    /// Dependency viewer.
+    Dependencies(DependencyScreen),
+    /// Array task viewer.
+    ArrayTasks(ArrayTaskScreen),
+    /// Attach prompt.
+    AttachPrompt(AttachPromptScreen),
+    /// Investigation report.
+    Investigation(InvestigationScreen),
+    /// Node detail screen.
+    NodeDetail(NodeDetailScreen),
+    /// Job info screen (with efficiency data).
+    JobInfo(JobInfoScreen),
 }
 
 /// Messages from background refresh worker to main thread.
@@ -106,6 +146,8 @@ pub enum Msg {
     Jobs(Vec<Job>),
     Nodes(Vec<Node>),
     Partitions(Vec<ClusterSummary>),
+    History(Vec<SacctJob>),
+    Investigation(Box<InvestigationReport>),
     Error(String),
 }
 
@@ -122,7 +164,9 @@ pub struct App {
     pub modal: Modal,
     pub jobs_view: JobsView,
     pub nodes_view: NodesView,
+    pub history_view: HistoryView,
     refresh_rx: mpsc::Receiver<Msg>,
+    msg_tx: mpsc::Sender<Msg>,
     request_tx: mpsc::Sender<Tab>,
     last_refresh: Option<Instant>,
     pending_action: Option<PendingAction>,
@@ -132,8 +176,17 @@ impl App {
     /// Create a new App with the given config.
     pub fn new(config: Config) -> Self {
         let runner = Runner::new();
+
+        // Configure remote SSH if configured
+        if !config.remote.host.is_empty() {
+            runner.set_remote(config.remote.host.clone(), String::new());
+        }
+
         let (msg_tx, msg_rx) = mpsc::channel();
         let (request_tx, request_rx) = mpsc::channel();
+
+        // Clone msg_tx for investigation threads
+        let msg_tx_clone = msg_tx.clone();
 
         // One worker thread serves fetch requests so the UI never blocks on Slurm.
         let worker_runner = runner.clone();
@@ -141,10 +194,12 @@ impl App {
 
         let jobs_view = JobsView::from_config(&config);
         let nodes_view = NodesView::new(&config);
+        let history_view = HistoryView::new();
 
         Self {
             jobs_view,
             nodes_view,
+            history_view,
             config,
             runner,
             tab: Tab::Jobs,
@@ -155,6 +210,7 @@ impl App {
             should_quit: false,
             modal: Modal::None,
             refresh_rx: msg_rx,
+            msg_tx: msg_tx_clone,
             request_tx,
             last_refresh: None,
             pending_action: None,
@@ -163,6 +219,7 @@ impl App {
 
     /// Process any pending messages from the refresh worker.
     pub fn drain_messages(&mut self) {
+        let current_user = std::env::var("USER").unwrap_or_default();
         while let Ok(msg) = self.refresh_rx.try_recv() {
             match msg {
                 Msg::Jobs(jobs) => {
@@ -176,6 +233,20 @@ impl App {
                 Msg::Partitions(partitions) => {
                     self.partitions = partitions;
                     self.status = None;
+                }
+                Msg::History(sacct_jobs) => {
+                    self.history_view.update(sacct_jobs, &current_user);
+                    self.status = None;
+                }
+                Msg::Investigation(report) => {
+                    // Create screen based on target kind
+                    let mut screen = if report.target.kind == "job" {
+                        InvestigationScreen::for_job(report.target.identifier.clone(), None)
+                    } else {
+                        InvestigationScreen::for_node(report.target.identifier.clone())
+                    };
+                    screen.load_report(*report);
+                    self.modal = Modal::Investigation(screen);
                 }
                 Msg::Error(err) => {
                     self.status = Some(format!("Error: {}", err));
@@ -207,6 +278,117 @@ impl App {
         let filtered = self.jobs_view.filtered_jobs(&self.jobs);
         let cursor = self.jobs_view.cursor_row();
         filtered.get(cursor).copied()
+    }
+
+    /// Get the currently selected node (Nodes tab only).
+    fn current_node(&self) -> Option<&Node> {
+        if self.tab != Tab::Nodes {
+            return None;
+        }
+        self.nodes_view.current_node(&self.nodes)
+    }
+
+    /// Open the log viewer for a job (stdout or stderr).
+    fn open_log_viewer(&mut self, job_id: String, is_stdout: bool) {
+        let (stdout_path, stderr_path) = fetch::fetch_log_paths(&self.runner, &job_id);
+        let (path, log_type) = if is_stdout {
+            (stdout_path, "stdout".to_string())
+        } else {
+            (stderr_path, "stderr".to_string())
+        };
+        if path.is_empty() {
+            self.status = Some("Log path not found".to_string());
+            return;
+        }
+        let content = fetch::tail_log_file(&self.runner, &path, 500);
+        let screen = LogViewerScreen::new(job_id.clone(), path.clone(), log_type, content);
+        self.modal = Modal::LogViewer(screen);
+    }
+
+    /// Open the job detail screen.
+    fn open_job_detail(&mut self, job_id: String) {
+        let data = fetch::fetch_job_detail(&self.runner, &job_id);
+        let screen = JobDetailScreen::new(job_id, data);
+        self.modal = Modal::JobDetail(screen);
+    }
+
+    /// Open the batch script viewer.
+    fn open_batch_script(&mut self, job_id: String) {
+        let script = fetch::fetch_batch_script(&self.runner, &job_id);
+        let screen = BatchScriptScreen::new(job_id, script);
+        self.modal = Modal::BatchScript(screen);
+    }
+
+    /// Open the dependencies viewer.
+    fn open_dependencies(&mut self, job_id: String) {
+        // Find the job first
+        if let Some(job) = self.jobs.iter().find(|j| j.job_id == job_id).cloned() {
+            let deps = fetch::fetch_job_dependencies(&self.runner, &job_id);
+            let screen = DependencyScreen::new(job, deps);
+            self.modal = Modal::Dependencies(screen);
+        } else {
+            self.status = Some("Job not found".to_string());
+        }
+    }
+
+    /// Open the node detail screen.
+    fn open_node_detail(&mut self, node_name: String) {
+        if let Some(node) = self.nodes.iter().find(|n| n.name == node_name).cloned() {
+            let data = fetch::fetch_node_detail(&self.runner, &node_name);
+            let screen = NodeDetailScreen::new(node, data);
+            self.modal = Modal::NodeDetail(screen);
+        } else {
+            self.status = Some("Node not found".to_string());
+        }
+    }
+
+    /// Open the job info screen (with efficiency data).
+    fn open_job_info(&mut self, job_id: String) {
+        if let Some(job) = self.jobs.iter().find(|j| j.job_id == job_id).cloned() {
+            let detail = fetch::fetch_job_detail(&self.runner, &job_id);
+            let deps = fetch::fetch_job_dependencies(&self.runner, &job_id);
+            // Note: JobInfoScreen doesn't use efficiency data yet, but fetch_job_efficiency exists
+            let screen = JobInfoScreen::new(job, detail, deps);
+            self.modal = Modal::JobInfo(screen);
+        } else {
+            self.status = Some("Job not found".to_string());
+        }
+    }
+
+    /// Start a job investigation (runs on worker thread).
+    fn start_job_investigation(&mut self, job_id: String) {
+        self.status = Some(format!("Investigating job {}...", job_id));
+
+        let runner = self.runner.clone();
+        let tx = self.msg_tx.clone();
+        let _max_related = self.config.investigation.max_related_jobs; // Reserved for future use
+        let reasons_path = if self.config.investigation.reasons_path.is_empty() {
+            None
+        } else {
+            Some(self.config.investigation.reasons_path.clone())
+        };
+
+        std::thread::spawn(move || {
+            use crate::slurm::investigate::investigate_job;
+            let (reason_table, _) = ReasonTable::load(reasons_path.as_deref());
+            let report = investigate_job(&runner, &reason_table, &job_id);
+            let _ = tx.send(Msg::Investigation(Box::new(report)));
+        });
+    }
+
+    /// Start a node investigation (runs on worker thread).
+    fn start_node_investigation(&mut self, node_name: String) {
+        self.status = Some(format!("Investigating node {}...", node_name));
+
+        let runner = self.runner.clone();
+        let tx = self.msg_tx.clone();
+        let max_related = self.config.investigation.max_related_jobs;
+
+        std::thread::spawn(move || {
+            use crate::slurm::investigate::investigate_node;
+            let report = investigate_node(&runner, &node_name, max_related as usize);
+            let _ = tx.send(Msg::Investigation(Box::new(report)));
+        });
     }
 
     /// Execute a pending action after confirmation.
@@ -338,34 +520,55 @@ impl App {
                                 match action {
                                     JobAction::Cancel => self.handle_job_action(job_id, "cancel"),
                                     JobAction::AttachFirst => {
-                                        self.status =
-                                            Some("Attach not yet implemented".to_string());
+                                        if self.config.attach.enabled {
+                                            // Find the job to get its nodelist
+                                            if let Some(job) =
+                                                self.jobs.iter().find(|j| j.job_id == job_id)
+                                            {
+                                                let first_node = fetch::resolve_first_node(
+                                                    &self.runner,
+                                                    &job.nodelist,
+                                                );
+                                                let screen = AttachPromptScreen::new(
+                                                    job_id.clone(),
+                                                    first_node,
+                                                );
+                                                self.modal = Modal::AttachPrompt(screen);
+                                            } else {
+                                                self.status = Some("Job not found".to_string());
+                                            }
+                                        } else {
+                                            self.status =
+                                                Some("Attach disabled in config".to_string());
+                                        }
                                     }
                                     JobAction::AttachCustom => {
-                                        self.status =
-                                            Some("Attach not yet implemented".to_string());
+                                        if self.config.attach.enabled {
+                                            // Use empty string to prompt for custom node
+                                            let screen = AttachPromptScreen::new(
+                                                job_id.clone(),
+                                                String::new(),
+                                            );
+                                            self.modal = Modal::AttachPrompt(screen);
+                                        } else {
+                                            self.status =
+                                                Some("Attach disabled in config".to_string());
+                                        }
                                     }
                                     JobAction::Stdout => {
-                                        self.status =
-                                            Some("Log viewing not yet implemented".to_string());
+                                        self.open_log_viewer(job_id, true);
                                     }
                                     JobAction::Stderr => {
-                                        self.status =
-                                            Some("Log viewing not yet implemented".to_string());
+                                        self.open_log_viewer(job_id, false);
                                     }
                                     JobAction::Detail => {
-                                        self.status =
-                                            Some("Detail view not yet implemented".to_string());
+                                        self.open_job_detail(job_id);
                                     }
                                     JobAction::BatchScript => {
-                                        self.status = Some(
-                                            "Batch script view not yet implemented".to_string(),
-                                        );
+                                        self.open_batch_script(job_id);
                                     }
                                     JobAction::Dependencies => {
-                                        self.status = Some(
-                                            "Dependencies view not yet implemented".to_string(),
-                                        );
+                                        self.open_dependencies(job_id);
                                     }
                                 }
                             }
@@ -431,6 +634,9 @@ impl App {
                                         self.config.columns.partitions_order.clear();
                                         self.config.columns.partitions_hidden.clear();
                                     }
+                                    Tab::History | Tab::Health => {
+                                        // No column config for these tabs
+                                    }
                                 }
                                 // Reload views with new column config
                                 self.jobs_view = JobsView::from_config(&self.config);
@@ -447,6 +653,99 @@ impl App {
                         return true;
                     }
                     ModalOutcome::Continue => return true,
+                },
+                Modal::JobDetail(state) => match state.handle_key(key_event) {
+                    DetailOutcome::Close => {
+                        self.modal = Modal::None;
+                        return true;
+                    }
+                    _ => return true,
+                },
+                Modal::BatchScript(state) => match state.handle_key(key_event) {
+                    DetailOutcome::Close => {
+                        self.modal = Modal::None;
+                        return true;
+                    }
+                    _ => return true,
+                },
+                Modal::LogViewer(state) => match state.handle_key(key_event) {
+                    DetailOutcome::Close => {
+                        self.modal = Modal::None;
+                        return true;
+                    }
+                    _ => return true,
+                },
+                Modal::Dependencies(state) => match state.handle_key(key_event) {
+                    DetailOutcome::Close => {
+                        self.modal = Modal::None;
+                        return true;
+                    }
+                    _ => return true,
+                },
+                Modal::ArrayTasks(state) => match state.handle_key(key_event) {
+                    DetailOutcome::Close => {
+                        self.modal = Modal::None;
+                        return true;
+                    }
+                    _ => return true,
+                },
+                Modal::AttachPrompt(state) => match state.handle_key(key_event) {
+                    DetailOutcome::Close => {
+                        self.modal = Modal::None;
+                        return true;
+                    }
+                    DetailOutcome::Value(node_override) => {
+                        // Build the attach command
+                        let job_id = state.job_id.clone();
+                        self.modal = Modal::None;
+
+                        if let Err(err) = AttachPromptScreen::check_enabled(&self.config.attach) {
+                            self.status = Some(format!("Attach disabled: {}", err));
+                            return true;
+                        }
+
+                        if let Some(job) = self.jobs.iter().find(|j| j.job_id == job_id) {
+                            let node_to_use = if node_override.is_empty() {
+                                fetch::resolve_first_node(&self.runner, &job.nodelist)
+                            } else {
+                                node_override
+                            };
+
+                            let cmd_parts = fetch::build_attach_command(
+                                &job_id,
+                                Some(&node_to_use),
+                                &self.config.attach.default_command,
+                                &self.config.attach.extra_args,
+                            );
+                            let cmd = cmd_parts.join(" ");
+                            self.status = Some(format!("Run: {}", cmd));
+                        } else {
+                            self.status = Some("Job not found".to_string());
+                        }
+                        return true;
+                    }
+                    _ => return true,
+                },
+                Modal::Investigation(state) => match state.handle_key(key_event) {
+                    DetailOutcome::Close => {
+                        self.modal = Modal::None;
+                        return true;
+                    }
+                    _ => return true,
+                },
+                Modal::NodeDetail(state) => match state.handle_key(key_event) {
+                    DetailOutcome::Close => {
+                        self.modal = Modal::None;
+                        return true;
+                    }
+                    _ => return true,
+                },
+                Modal::JobInfo(state) => match state.handle_key(key_event) {
+                    DetailOutcome::Close => {
+                        self.modal = Modal::None;
+                        return true;
+                    }
+                    _ => return true,
                 },
                 Modal::None => {}
             }
@@ -476,6 +775,16 @@ impl App {
             }
             (KeyCode::Char('3'), KeyModifiers::NONE) => {
                 self.tab = Tab::Partitions;
+                self.last_refresh = None;
+                true
+            }
+            (KeyCode::Char('4'), KeyModifiers::NONE) => {
+                self.tab = Tab::History;
+                self.last_refresh = None;
+                true
+            }
+            (KeyCode::Char('5'), KeyModifiers::NONE) => {
+                self.tab = Tab::Health;
                 self.last_refresh = None;
                 true
             }
@@ -522,10 +831,9 @@ impl App {
                             order,
                         ));
                     }
-                    Tab::Partitions => {
-                        // Partitions column toggle not yet implemented
-                        self.status =
-                            Some("Column toggle not available for Partitions".to_string());
+                    Tab::Partitions | Tab::History | Tab::Health => {
+                        // Column toggle not available for these tabs
+                        self.status = Some("Column toggle not available for this tab".to_string());
                     }
                 }
                 true
@@ -538,6 +846,8 @@ impl App {
                     Tab::Jobs => "Jobs",
                     Tab::Nodes => "Nodes",
                     Tab::Partitions => "Partitions",
+                    Tab::History => "History",
+                    Tab::Health => "Health",
                 };
                 self.modal =
                     Modal::KeybindingsHelp(KeybindingsHelpState::new(pane_name.to_string()));
@@ -548,6 +858,34 @@ impl App {
                 if let Some(job) = self.current_job() {
                     use crate::views::modals::job_actions::JobActionState;
                     self.modal = Modal::JobAction(Box::new(JobActionState::new(job.clone())));
+                }
+                true
+            }
+            // Nodes tab: Enter for node detail
+            (KeyCode::Enter, KeyModifiers::NONE) if self.tab == Tab::Nodes => {
+                if let Some(node) = self.current_node() {
+                    self.open_node_detail(node.name.clone());
+                }
+                true
+            }
+            // Jobs tab: I for investigation
+            (KeyCode::Char('I'), KeyModifiers::NONE) if self.tab == Tab::Jobs => {
+                if let Some(job) = self.current_job() {
+                    self.start_job_investigation(job.job_id.clone());
+                }
+                true
+            }
+            // Nodes tab: I for investigation
+            (KeyCode::Char('I'), KeyModifiers::NONE) if self.tab == Tab::Nodes => {
+                if let Some(node) = self.current_node() {
+                    self.start_node_investigation(node.name.clone());
+                }
+                true
+            }
+            // Jobs tab: i for job info
+            (KeyCode::Char('i'), KeyModifiers::NONE) if self.tab == Tab::Jobs => {
+                if let Some(job) = self.current_job() {
+                    self.open_job_info(job.job_id.clone());
                 }
                 true
             }
@@ -562,7 +900,19 @@ impl App {
                 }
                 true
             }
-            _ => false,
+            _ => {
+                // Delegate unhandled keys to the active view
+                let key_event = crossterm::event::KeyEvent::new(key, modifiers);
+                match self.tab {
+                    Tab::Jobs => self.jobs_view.handle_key(key_event),
+                    Tab::Nodes => self.nodes_view.handle_key(key_event),
+                    Tab::History => {
+                        let current_user = std::env::var("USER").unwrap_or_default();
+                        self.history_view.handle_key(key_event, &current_user)
+                    }
+                    Tab::Partitions | Tab::Health => false, // No view-level keys yet
+                }
+            }
         }
     }
 
@@ -591,6 +941,8 @@ fn refresh_worker(runner: Runner, requests: mpsc::Receiver<Tab>, tx: mpsc::Sende
             Tab::Jobs => Msg::Jobs(fetch::fetch_jobs(&runner)),
             Tab::Nodes => Msg::Nodes(fetch::fetch_nodes(&runner)),
             Tab::Partitions => Msg::Partitions(fetch::fetch_cluster_summary(&runner)),
+            Tab::History => Msg::History(fetch::fetch_sacct_jobs(&runner, 24)),
+            Tab::Health => continue, // Health is passive, no fetch
         };
         if tx.send(msg).is_err() {
             break; // UI is gone
@@ -655,6 +1007,8 @@ fn render_tabs(f: &mut ratatui::Frame, app: &App, area: Rect) {
         Tab::Jobs => 0,
         Tab::Nodes => 1,
         Tab::Partitions => 2,
+        Tab::History => 3,
+        Tab::Health => 4,
     };
 
     let tabs = Tabs::new(titles)
@@ -676,6 +1030,8 @@ fn render_content(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         Tab::Jobs => views::render_jobs(f, app, area),
         Tab::Nodes => views::render_nodes(f, app, area),
         Tab::Partitions => views::render_partitions(f, app, area),
+        Tab::History => views::render_history(f, area, &mut app.history_view),
+        Tab::Health => views::render_health(f, app, area),
     }
 }
 
@@ -697,13 +1053,25 @@ fn render_status(f: &mut ratatui::Frame, app: &App, area: Rect) {
 }
 
 /// Render the active modal overlay.
-fn render_modal(f: &mut ratatui::Frame, app: &App, area: Rect) {
-    match &app.modal {
+fn render_modal(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
+    match &mut app.modal {
         Modal::Confirm(state) => state.render(f, area),
         Modal::JobAction(state) => state.render(f, area),
         Modal::BulkAction(state) => state.render(f, area),
         Modal::ColumnToggle(state) => state.render(f, area),
         Modal::KeybindingsHelp(state) => state.render(f, area),
+        Modal::JobDetail(state) => state.render(f, area),
+        Modal::BatchScript(state) => state.render(f, area),
+        Modal::LogViewer(state) => state.render(f, area),
+        Modal::Dependencies(state) => state.render(f, area),
+        Modal::ArrayTasks(state) => state.render(f, area),
+        Modal::AttachPrompt(state) => state.render(f, area),
+        Modal::Investigation(state) => {
+            use crate::views::investigate;
+            investigate::render(f, area, state);
+        }
+        Modal::NodeDetail(state) => state.render(f, area),
+        Modal::JobInfo(state) => state.render(f, area),
         Modal::None => {}
     }
 }
@@ -716,11 +1084,15 @@ mod tests {
     fn tab_cycle() {
         assert_eq!(Tab::Jobs.next(), Tab::Nodes);
         assert_eq!(Tab::Nodes.next(), Tab::Partitions);
-        assert_eq!(Tab::Partitions.next(), Tab::Jobs);
+        assert_eq!(Tab::Partitions.next(), Tab::History);
+        assert_eq!(Tab::History.next(), Tab::Health);
+        assert_eq!(Tab::Health.next(), Tab::Jobs);
 
-        assert_eq!(Tab::Jobs.prev(), Tab::Partitions);
+        assert_eq!(Tab::Jobs.prev(), Tab::Health);
         assert_eq!(Tab::Nodes.prev(), Tab::Jobs);
         assert_eq!(Tab::Partitions.prev(), Tab::Nodes);
+        assert_eq!(Tab::History.prev(), Tab::Partitions);
+        assert_eq!(Tab::Health.prev(), Tab::History);
     }
 
     #[test]
@@ -728,15 +1100,19 @@ mod tests {
         assert_eq!(Tab::Jobs.title(), "Jobs");
         assert_eq!(Tab::Nodes.title(), "Nodes");
         assert_eq!(Tab::Partitions.title(), "Partitions");
+        assert_eq!(Tab::History.title(), "History");
+        assert_eq!(Tab::Health.title(), "Health");
     }
 
     #[test]
     fn tab_all() {
         let all = Tab::all();
-        assert_eq!(all.len(), 3);
+        assert_eq!(all.len(), 5);
         assert_eq!(all[0], Tab::Jobs);
         assert_eq!(all[1], Tab::Nodes);
         assert_eq!(all[2], Tab::Partitions);
+        assert_eq!(all[3], Tab::History);
+        assert_eq!(all[4], Tab::Health);
     }
 
     #[test]

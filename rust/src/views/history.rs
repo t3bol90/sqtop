@@ -211,6 +211,27 @@ impl HistoryView {
             format!("{}…", value.chars().take(w - 1).collect::<String>())
         }
     }
+
+    /// Handle key input for the history view.
+    pub fn handle_key(&mut self, key: crossterm::event::KeyEvent, current_user: &str) -> bool {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        match (key.code, key.modifiers) {
+            (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
+                self.table_state.next();
+                true
+            }
+            (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
+                self.table_state.prev();
+                true
+            }
+            (KeyCode::Char('m'), KeyModifiers::NONE) => {
+                self.toggle_mine(current_user);
+                true
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Render the history view.

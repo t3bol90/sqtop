@@ -14,21 +14,13 @@ pub mod log_viewer;
 pub mod node_detail;
 
 // Re-exports will be used when modal integration is added
-#[allow(unused_imports)]
 pub use array_tasks::ArrayTaskScreen;
-#[allow(unused_imports)]
 pub use attach_prompt::AttachPromptScreen;
-#[allow(unused_imports)]
 pub use batch_script::BatchScriptScreen;
-#[allow(unused_imports)]
 pub use dependency::DependencyScreen;
-#[allow(unused_imports)]
 pub use job_detail::JobDetailScreen;
-#[allow(unused_imports)]
 pub use job_info::JobInfoScreen;
-#[allow(unused_imports)]
 pub use log_viewer::LogViewerScreen;
-#[allow(unused_imports)]
 pub use node_detail::NodeDetailScreen;
 
 /// Action outcome from handle_key methods.

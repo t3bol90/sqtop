@@ -49,3 +49,13 @@ pub fn render_nodes(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
 pub fn render_partitions(f: &mut ratatui::Frame, app: &App, area: Rect) {
     partitions::render(f, app, area);
 }
+
+/// Render the History tab.
+pub fn render_history(f: &mut ratatui::Frame, area: Rect, view: &mut history::HistoryView) {
+    history::render(f, area, view);
+}
+
+/// Render the Health tab.
+pub fn render_health(f: &mut ratatui::Frame, app: &App, area: Rect) {
+    health::render(f, app, area);
+}

@@ -85,6 +85,41 @@ impl InvestigationScreen {
         self.scroll_offset = max_offset;
     }
 
+    /// Handle key input for the investigation screen.
+    pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> crate::views::detail::Outcome {
+        use crate::views::detail::Outcome;
+        use crossterm::event::KeyCode;
+
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => Outcome::Close,
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.scroll_up(1);
+                Outcome::None
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.scroll_down(1);
+                Outcome::None
+            }
+            KeyCode::PageUp => {
+                self.scroll_up(10);
+                Outcome::None
+            }
+            KeyCode::PageDown => {
+                self.scroll_down(10);
+                Outcome::None
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                self.scroll_to_top();
+                Outcome::None
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                self.scroll_to_bottom();
+                Outcome::None
+            }
+            _ => Outcome::None,
+        }
+    }
+
     /// Get the title for the screen.
     fn title(&self) -> String {
         let kind = if self.is_job { "Job" } else { "Node" };
