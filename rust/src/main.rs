@@ -1,4 +1,5 @@
 mod app;
+mod clipboard;
 mod columns;
 mod config;
 mod investigation;
