@@ -345,7 +345,10 @@ mod tests {
             None,
         );
         assert_eq!(screen.title, "Attach with node override");
-        assert_eq!(screen.placeholder, "node name/expression (empty to skip -w)");
+        assert_eq!(
+            screen.placeholder,
+            "node name/expression (empty to skip -w)"
+        );
         assert_eq!(screen.job_id, "job123");
         assert_eq!(screen.input, "node01");
     }
@@ -355,9 +358,11 @@ mod tests {
         // Verify that new() still works as before
         let screen = AttachPromptScreen::new("job456".to_string(), "node02".to_string());
         assert_eq!(screen.title, "Attach with node override");
-        assert_eq!(screen.placeholder, "node name/expression (empty to skip -w)");
+        assert_eq!(
+            screen.placeholder,
+            "node name/expression (empty to skip -w)"
+        );
         assert_eq!(screen.job_id, "job456");
         assert_eq!(screen.input, "node02");
     }
-
 }

@@ -574,11 +574,16 @@ mod tests {
         let config = Config::default();
         let state = PaletteState::new(&config);
         // Find the InvestigateJobById command
-        let cmd = state.commands.iter()
+        let cmd = state
+            .commands
+            .iter()
             .find(|c| matches!(c.command, PaletteCommand::InvestigateJobById));
         assert!(cmd.is_some(), "InvestigateJobById command not found");
         assert_eq!(cmd.unwrap().title, "Investigate job by ID");
-        assert!(!cmd.unwrap().discover, "Investigation command should be discover=false");
+        assert!(
+            !cmd.unwrap().discover,
+            "Investigation command should be discover=false"
+        );
     }
 
     #[test]
@@ -586,11 +591,16 @@ mod tests {
         let config = Config::default();
         let state = PaletteState::new(&config);
         // Find the InvestigateNodeByName command
-        let cmd = state.commands.iter()
+        let cmd = state
+            .commands
+            .iter()
             .find(|c| matches!(c.command, PaletteCommand::InvestigateNodeByName));
         assert!(cmd.is_some(), "InvestigateNodeByName command not found");
         assert_eq!(cmd.unwrap().title, "Investigate node by name");
-        assert!(!cmd.unwrap().discover, "Investigation command should be discover=false");
+        assert!(
+            !cmd.unwrap().discover,
+            "Investigation command should be discover=false"
+        );
     }
 
     #[test]
@@ -601,7 +611,10 @@ mod tests {
         state.search_query = "Investigate job".to_string();
         state.update_filter();
         // Should find the command
-        assert!(!state.filtered.is_empty(), "Should find investigation command");
+        assert!(
+            !state.filtered.is_empty(),
+            "Should find investigation command"
+        );
         // Select and execute it
         state.table_state.select(Some(0));
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
@@ -622,17 +635,21 @@ mod tests {
         state.search_query = "Investigate node".to_string();
         state.update_filter();
         // Should find the command
-        assert!(!state.filtered.is_empty(), "Should find investigation command");
+        assert!(
+            !state.filtered.is_empty(),
+            "Should find investigation command"
+        );
         // Select and execute it
         state.table_state.select(Some(0));
         let key = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
         let outcome = state.handle_key(key, &config);
         match outcome {
-            ModalOutcome::Dismiss(PaletteResult::Execute(PaletteCommand::InvestigateNodeByName)) => {
+            ModalOutcome::Dismiss(PaletteResult::Execute(
+                PaletteCommand::InvestigateNodeByName,
+            )) => {
                 // Success
             }
             _ => panic!("Expected InvestigateNodeByName command to be executed"),
         }
     }
-
 }

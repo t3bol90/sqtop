@@ -151,6 +151,117 @@ pub fn restore_cursor_position(
     Some(saved_row.min(partitions.len() - 1))
 }
 
+/// Partitions view state - holds sort configuration.
+pub struct PartitionsView {
+    /// Sort column: "partition" | "nodes" | ""
+    pub sort_col: String,
+    /// Reverse sort order
+    pub sort_reversed: bool,
+    /// Pending config update to persist (set by view actions, consumed by app)
+    pending_config_update: Option<std::collections::HashMap<String, toml::Value>>,
+}
+
+impl PartitionsView {
+    /// Create a new PartitionsView from config.
+    pub fn from_config(config: &crate::config::Config) -> Self {
+        let sort_col = config.view_state.partitions_sort_col.clone();
+        let sort_reversed = config.view_state.partitions_sort_reversed;
+
+        // Only accept valid sort columns
+        let sort_col = if sort_col == "partition" || sort_col == "nodes" {
+            sort_col
+        } else {
+            String::new()
+        };
+
+        Self {
+            sort_col,
+            sort_reversed,
+            pending_config_update: None,
+        }
+    }
+
+    /// Sort partitions based on current sort column and direction.
+    pub fn sorted(&self, mut partitions: Vec<ClusterSummary>) -> Vec<ClusterSummary> {
+        match self.sort_col.as_str() {
+            "partition" => {
+                partitions.sort_by(|a, b| {
+                    let ord = a.partition.cmp(&b.partition);
+                    if self.sort_reversed {
+                        ord.reverse()
+                    } else {
+                        ord
+                    }
+                });
+            }
+            "nodes" => {
+                partitions.sort_by(|a, b| {
+                    // Parse nodes as int, default to 0 if not a number
+                    let a_num: i32 = a.nodes.parse().unwrap_or(0);
+                    let b_num: i32 = b.nodes.parse().unwrap_or(0);
+                    let ord = a_num.cmp(&b_num);
+                    if self.sort_reversed {
+                        ord.reverse()
+                    } else {
+                        ord
+                    }
+                });
+            }
+            _ => {
+                // No sorting (empty string means default order)
+            }
+        }
+        partitions
+    }
+
+    /// Set sort column, toggling reverse if same column selected again.
+    pub fn set_sort(&mut self, col: &str) {
+        if self.sort_col == col {
+            self.sort_reversed = !self.sort_reversed;
+        } else {
+            self.sort_col = col.to_string();
+            self.sort_reversed = false;
+        }
+
+        // Prepare config update
+        let mut update = std::collections::HashMap::new();
+        let mut view_state = toml::Table::new();
+        view_state.insert(
+            "partitions_sort_col".to_string(),
+            toml::Value::String(self.sort_col.clone()),
+        );
+        view_state.insert(
+            "partitions_sort_reversed".to_string(),
+            toml::Value::Boolean(self.sort_reversed),
+        );
+        update.insert("view_state".to_string(), toml::Value::Table(view_state));
+        self.pending_config_update = Some(update);
+    }
+
+    /// Take pending config update, if any.
+    pub fn take_pending_config_update(
+        &mut self,
+    ) -> Option<std::collections::HashMap<String, toml::Value>> {
+        self.pending_config_update.take()
+    }
+
+    /// Handle key events for partitions view.
+    pub fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        match (key.code, key.modifiers) {
+            (KeyCode::Char('s'), KeyModifiers::NONE) => {
+                self.set_sort("partition");
+                true
+            }
+            (KeyCode::Char('n'), KeyModifiers::NONE) => {
+                self.set_sort("nodes");
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
 /// Render the partitions table.
 pub fn render(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
     // Check for too-small area (would panic in ratatui's constraint solver)
@@ -195,9 +306,26 @@ pub fn render(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         .collect();
     let header = Row::new(header_cells).height(1).bottom_margin(0);
 
+    // Get sorted partitions (using anchor capture before sorting)
+    let anchor = app
+        .partitions_table_state
+        .selected()
+        .and_then(|idx| app.partitions.get(idx).map(|p| p.partition.clone()));
+
+    let sorted_partitions = app.partitions_view.sorted(app.partitions.clone());
+
+    // Restore cursor position after sorting
+    if let Some(anchor_name) = anchor {
+        if let Some(new_idx) = sorted_partitions
+            .iter()
+            .position(|p| p.partition == anchor_name)
+        {
+            app.partitions_table_state.select(Some(new_idx));
+        }
+    }
+
     // Build rows
-    let rows: Vec<Row> = app
-        .partitions
+    let rows: Vec<Row> = sorted_partitions
         .iter()
         .map(|partition| {
             let cells: Vec<Span> = allocated
@@ -573,5 +701,183 @@ mod tests {
         assert_eq!(plain_cell(&p, "NODES"), "4");
         assert_eq!(plain_cell(&p, "NODELIST"), "node[01-04]");
         assert_eq!(plain_cell(&p, "UNKNOWN"), "");
+    }
+
+    #[test]
+    fn test_partitions_view_default() {
+        let config = Config::default();
+        let view = PartitionsView::from_config(&config);
+        assert_eq!(view.sort_col, "");
+        assert!(!view.sort_reversed);
+    }
+
+    #[test]
+    fn test_partitions_view_from_config_valid_col() {
+        let mut config = Config::default();
+        config.view_state.partitions_sort_col = "partition".to_string();
+        config.view_state.partitions_sort_reversed = true;
+
+        let view = PartitionsView::from_config(&config);
+        assert_eq!(view.sort_col, "partition");
+        assert!(view.sort_reversed);
+    }
+
+    #[test]
+    fn test_partitions_view_from_config_invalid_col() {
+        let mut config = Config::default();
+        config.view_state.partitions_sort_col = "invalid".to_string();
+
+        let view = PartitionsView::from_config(&config);
+        assert_eq!(view.sort_col, "");
+    }
+
+    #[test]
+    fn test_sorted_by_partition() {
+        let config = Config::default();
+        let mut view = PartitionsView::from_config(&config);
+        view.set_sort("partition");
+
+        let partitions = vec![
+            make_partition("zeta", "up", "idle"),
+            make_partition("alpha", "up", "mixed"),
+            make_partition("beta", "up", "idle"),
+        ];
+
+        let sorted = view.sorted(partitions);
+        assert_eq!(sorted[0].partition, "alpha");
+        assert_eq!(sorted[1].partition, "beta");
+        assert_eq!(sorted[2].partition, "zeta");
+    }
+
+    #[test]
+    fn test_sorted_by_partition_reversed() {
+        let config = Config::default();
+        let mut view = PartitionsView::from_config(&config);
+        view.set_sort("partition");
+        view.set_sort("partition"); // Toggle reverse
+
+        let partitions = vec![
+            make_partition("alpha", "up", "idle"),
+            make_partition("zeta", "up", "mixed"),
+            make_partition("beta", "up", "idle"),
+        ];
+
+        let sorted = view.sorted(partitions);
+        assert_eq!(sorted[0].partition, "zeta");
+        assert_eq!(sorted[1].partition, "beta");
+        assert_eq!(sorted[2].partition, "alpha");
+    }
+
+    #[test]
+    fn test_sorted_by_nodes() {
+        let config = Config::default();
+        let mut view = PartitionsView::from_config(&config);
+        view.set_sort("nodes");
+
+        let mut partitions = vec![
+            make_partition("alpha", "up", "idle"),
+            make_partition("beta", "up", "mixed"),
+            make_partition("gamma", "up", "idle"),
+        ];
+        // Override nodes count
+        partitions[0].nodes = "10".to_string();
+        partitions[1].nodes = "5".to_string();
+        partitions[2].nodes = "20".to_string();
+
+        let sorted = view.sorted(partitions);
+        assert_eq!(sorted[0].partition, "beta"); // 5 nodes
+        assert_eq!(sorted[1].partition, "alpha"); // 10 nodes
+        assert_eq!(sorted[2].partition, "gamma"); // 20 nodes
+    }
+
+    #[test]
+    fn test_sorted_by_nodes_reversed() {
+        let config = Config::default();
+        let mut view = PartitionsView::from_config(&config);
+        view.set_sort("nodes");
+        view.set_sort("nodes"); // Toggle reverse
+
+        let mut partitions = vec![
+            make_partition("alpha", "up", "idle"),
+            make_partition("beta", "up", "mixed"),
+        ];
+        partitions[0].nodes = "5".to_string();
+        partitions[1].nodes = "10".to_string();
+
+        let sorted = view.sorted(partitions);
+        assert_eq!(sorted[0].partition, "beta"); // 10 nodes
+        assert_eq!(sorted[1].partition, "alpha"); // 5 nodes
+    }
+
+    #[test]
+    fn test_set_sort_toggle_reverse() {
+        let config = Config::default();
+        let mut view = PartitionsView::from_config(&config);
+
+        view.set_sort("partition");
+        assert_eq!(view.sort_col, "partition");
+        assert!(!view.sort_reversed);
+
+        view.set_sort("partition");
+        assert_eq!(view.sort_col, "partition");
+        assert!(view.sort_reversed);
+
+        view.set_sort("nodes");
+        assert_eq!(view.sort_col, "nodes");
+        assert!(!view.sort_reversed);
+    }
+
+    #[test]
+    fn test_set_sort_creates_pending_update() {
+        let config = Config::default();
+        let mut view = PartitionsView::from_config(&config);
+
+        view.set_sort("partition");
+        let update = view.take_pending_config_update();
+        assert!(update.is_some());
+
+        let update = update.unwrap();
+        assert!(update.contains_key("view_state"));
+    }
+
+    #[test]
+    fn test_handle_key_s_sorts_by_partition() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let config = Config::default();
+        let mut view = PartitionsView::from_config(&config);
+
+        let key = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE);
+        let handled = view.handle_key(key);
+
+        assert!(handled);
+        assert_eq!(view.sort_col, "partition");
+    }
+
+    #[test]
+    fn test_handle_key_n_sorts_by_nodes() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let config = Config::default();
+        let mut view = PartitionsView::from_config(&config);
+
+        let key = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
+        let handled = view.handle_key(key);
+
+        assert!(handled);
+        assert_eq!(view.sort_col, "nodes");
+    }
+
+    #[test]
+    fn test_handle_key_unknown_returns_false() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let config = Config::default();
+        let mut view = PartitionsView::from_config(&config);
+
+        let key = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
+        let handled = view.handle_key(key);
+
+        assert!(!handled);
     }
 }

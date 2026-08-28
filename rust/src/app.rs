@@ -17,6 +17,7 @@ use crate::views::history::HistoryView;
 use crate::views::investigate::InvestigationScreen;
 use crate::views::jobs::JobsView;
 use crate::views::nodes::NodesView;
+use crate::views::partitions::PartitionsView;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use ratatui::backend::Backend;
@@ -183,6 +184,7 @@ pub struct App {
     pub nodes: Vec<Node>,
     pub partitions: Vec<ClusterSummary>,
     pub partitions_table_state: crate::views::table_state::CyclicTableState,
+    pub partitions_view: PartitionsView,
     pub status: Option<String>,
     pub should_quit: bool,
     pub modal: Modal,
@@ -194,6 +196,7 @@ pub struct App {
     request_tx: mpsc::Sender<Tab>,
     last_refresh: Option<Instant>,
     pending_action: Option<PendingAction>,
+    // Mouse drag state for column reordering
 }
 
 impl App {
@@ -218,11 +221,13 @@ impl App {
 
         let jobs_view = JobsView::from_config(&config);
         let nodes_view = NodesView::new(&config);
+        let partitions_view = PartitionsView::from_config(&config);
         let history_view = HistoryView::new();
 
         Self {
             jobs_view,
             nodes_view,
+            partitions_view,
             history_view,
             config,
             runner,
@@ -1517,18 +1522,23 @@ impl App {
                         self.history_view.handle_key(key_event, &current_user)
                     }
                     Tab::Partitions => {
-                        // Basic cursor navigation for partitions
-                        use crossterm::event::{KeyCode, KeyModifiers};
-                        match (key_event.code, key_event.modifiers) {
-                            (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
-                                self.partitions_table_state.next();
-                                true
+                        // Try view-specific keys first (sorting)
+                        if self.partitions_view.handle_key(key_event) {
+                            true
+                        } else {
+                            // Fall back to basic cursor navigation
+                            use crossterm::event::{KeyCode, KeyModifiers};
+                            match (key_event.code, key_event.modifiers) {
+                                (KeyCode::Down | KeyCode::Char('j'), KeyModifiers::NONE) => {
+                                    self.partitions_table_state.next();
+                                    true
+                                }
+                                (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
+                                    self.partitions_table_state.prev();
+                                    true
+                                }
+                                _ => false,
                             }
-                            (KeyCode::Up | KeyCode::Char('k'), KeyModifiers::NONE) => {
-                                self.partitions_table_state.prev();
-                                true
-                            }
-                            _ => false,
                         }
                     }
                     Tab::Health => false, // No view-level keys yet
@@ -1547,6 +1557,12 @@ impl App {
                                 self.persist_config_async(update);
                             }
                         }
+                        Tab::Partitions => {
+                            if let Some(update) = self.partitions_view.take_pending_config_update()
+                            {
+                                self.persist_config_async(update);
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -1556,6 +1572,7 @@ impl App {
         }
     }
 
+    /// Handle mouse events.
     /// Check if it's time to refresh the current tab.
     pub fn should_refresh(&self) -> bool {
         match self.last_refresh {
