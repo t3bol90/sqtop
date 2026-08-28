@@ -973,7 +973,7 @@ impl JobsView {
                 self.clear_selection();
                 true
             }
-            (KeyCode::Char('v') | KeyCode::Char('V'), KeyModifiers::NONE) => {
+            (KeyCode::Char('v') | KeyCode::Char('V'), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                 // Enter visual mode at current cursor
                 if let Some(cursor_row) = self.table_state.selected() {
                     self.visual_selection.enter(cursor_row);

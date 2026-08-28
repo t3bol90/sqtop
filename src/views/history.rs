@@ -262,7 +262,7 @@ impl HistoryView {
                 self.toggle_mine(current_user);
                 true
             }
-            (KeyCode::Char('v') | KeyCode::Char('V'), KeyModifiers::NONE) => {
+            (KeyCode::Char('v') | KeyCode::Char('V'), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                 // Enter visual mode at current cursor
                 if let Some(cursor_row) = self.table_state.selected() {
                     self.visual_selection.enter(cursor_row);
@@ -586,7 +586,7 @@ mod tests {
 
         // 'V' key should also work
         view.visual_selection.exit();
-        let key = KeyEvent::new(KeyCode::Char('V'), KeyModifiers::NONE);
+        let key = KeyEvent::new(KeyCode::Char('V'), KeyModifiers::NONE | KeyModifiers::SHIFT);
         let handled = view.handle_key(key, "alice");
         assert!(handled);
         assert!(view.visual_selection.is_active());

@@ -1341,7 +1341,7 @@ impl App {
                 true
             }
             // Column toggle
-            (KeyCode::Char('C'), KeyModifiers::NONE) => {
+            (KeyCode::Char('C'), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                 use crate::columns::{jobs_columns, nodes_columns};
                 use crate::views::modals::column_toggle::ColumnToggleState;
 
@@ -1386,7 +1386,7 @@ impl App {
                 true
             }
             // Command palette
-            (KeyCode::Char('S'), KeyModifiers::NONE) => {
+            (KeyCode::Char('S'), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                 use crate::views::modals::palette::PaletteState;
                 self.modal = Modal::Palette(PaletteState::new(&self.config));
                 true
@@ -1427,14 +1427,18 @@ impl App {
                 true
             }
             // Jobs tab: I for investigation
-            (KeyCode::Char('I'), KeyModifiers::NONE) if self.tab == Tab::Jobs => {
+            (KeyCode::Char('I'), KeyModifiers::NONE | KeyModifiers::SHIFT)
+                if self.tab == Tab::Jobs =>
+            {
                 if let Some(job) = self.current_job() {
                     self.start_job_investigation(job.job_id.clone());
                 }
                 true
             }
             // Nodes tab: I for investigation
-            (KeyCode::Char('I'), KeyModifiers::NONE) if self.tab == Tab::Nodes => {
+            (KeyCode::Char('I'), KeyModifiers::NONE | KeyModifiers::SHIFT)
+                if self.tab == Tab::Nodes =>
+            {
                 if let Some(node) = self.current_node() {
                     self.start_node_investigation(node.name.clone());
                 }
@@ -1469,7 +1473,9 @@ impl App {
                 true
             }
             // Jobs tab: D for dependencies
-            (KeyCode::Char('D'), KeyModifiers::NONE) if self.tab == Tab::Jobs => {
+            (KeyCode::Char('D'), KeyModifiers::NONE | KeyModifiers::SHIFT)
+                if self.tab == Tab::Jobs =>
+            {
                 if let Some(job) = self.current_job() {
                     self.open_dependencies(job.job_id.clone());
                 }
@@ -1499,7 +1505,9 @@ impl App {
                 true
             }
             // Jobs tab: R for release
-            (KeyCode::Char('R'), KeyModifiers::NONE) if self.tab == Tab::Jobs => {
+            (KeyCode::Char('R'), KeyModifiers::NONE | KeyModifiers::SHIFT)
+                if self.tab == Tab::Jobs =>
+            {
                 let job_ids = self.jobs_view.selected_or_current_job_ids();
                 if !job_ids.is_empty() {
                     self.handle_bulk_action("release", job_ids);
@@ -1603,7 +1611,9 @@ impl App {
                 true
             }
             // Jobs tab: B for bulk actions
-            (KeyCode::Char('B'), KeyModifiers::NONE) if self.tab == Tab::Jobs => {
+            (KeyCode::Char('B'), KeyModifiers::NONE | KeyModifiers::SHIFT)
+                if self.tab == Tab::Jobs =>
+            {
                 let selected_count = self.jobs_view.selection_count();
                 if selected_count > 0 {
                     use crate::views::modals::bulk_actions::BulkActionState;
@@ -2007,6 +2017,31 @@ mod tests {
     use super::*;
 
     #[test]
+    fn uppercase_bindings_accept_the_shift_modifier() {
+        // Terminals report Shift+s as Char('S') WITH KeyModifiers::SHIFT.
+        // Matching only on NONE makes every uppercase binding dead in practice.
+        let mut app = App::new(
+            Config::default(),
+            std::path::PathBuf::from("/tmp/test_config.toml"),
+        );
+        app.handle_key(KeyCode::Char('S'), KeyModifiers::SHIFT);
+        assert!(
+            matches!(app.modal, Modal::Palette(_)),
+            "Shift+S must open the command palette"
+        );
+    }
+
+    #[test]
+    fn uppercase_bindings_still_accept_no_modifier() {
+        let mut app = App::new(
+            Config::default(),
+            std::path::PathBuf::from("/tmp/test_config.toml"),
+        );
+        app.handle_key(KeyCode::Char('S'), KeyModifiers::NONE);
+        assert!(matches!(app.modal, Modal::Palette(_)));
+    }
+
+    #[test]
     fn test_toggle_pause_blocks_auto_refresh() {
         let mut app = App::new(
             Config::default(),
@@ -2015,7 +2050,7 @@ mod tests {
         app.last_refresh = None;
         assert!(app.should_refresh());
 
-        app.handle_key(KeyCode::Char('P'), KeyModifiers::NONE);
+        app.handle_key(KeyCode::Char('P'), KeyModifiers::NONE | KeyModifiers::SHIFT);
         assert!(!app.should_refresh(), "paused app must not auto-refresh");
         assert_eq!(app.status.as_deref(), Some("Paused"));
     }
@@ -2026,10 +2061,10 @@ mod tests {
             Config::default(),
             std::path::PathBuf::from("/tmp/test_config.toml"),
         );
-        app.handle_key(KeyCode::Char('P'), KeyModifiers::NONE);
+        app.handle_key(KeyCode::Char('P'), KeyModifiers::NONE | KeyModifiers::SHIFT);
         app.last_refresh = Some(std::time::Instant::now());
 
-        app.handle_key(KeyCode::Char('P'), KeyModifiers::NONE);
+        app.handle_key(KeyCode::Char('P'), KeyModifiers::NONE | KeyModifiers::SHIFT);
         assert!(app.should_refresh(), "resume must fetch immediately");
         assert_eq!(app.status.as_deref(), Some("Resumed"));
     }
@@ -2040,7 +2075,7 @@ mod tests {
             Config::default(),
             std::path::PathBuf::from("/tmp/test_config.toml"),
         );
-        app.handle_key(KeyCode::Char('P'), KeyModifiers::NONE);
+        app.handle_key(KeyCode::Char('P'), KeyModifiers::NONE | KeyModifiers::SHIFT);
         app.handle_key(KeyCode::Char('r'), KeyModifiers::NONE);
         assert!(!app.should_refresh());
     }
