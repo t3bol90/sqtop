@@ -548,7 +548,6 @@ fn load_inner(path: &Path) -> Result<Config> {
 
 /// Persist theme and broadcast interval to all three view keys.
 /// Used by Settings UI for theme/interval changes.
-#[allow(dead_code)]
 pub fn save(path: &Path, theme: &str, interval: f64) -> Result<()> {
     let mut updates = HashMap::new();
     updates.insert("theme".to_string(), toml::Value::String(theme.to_string()));

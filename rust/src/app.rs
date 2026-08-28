@@ -1337,7 +1337,6 @@ impl App {
 
     /// Persist theme and interval (spawns a thread).
     /// Used by Settings UI for theme/interval changes.
-    #[allow(dead_code)]
     pub fn persist_theme_interval_async(&self) {
         let path = self.config_path.clone();
         let theme = self.config.theme.clone();
