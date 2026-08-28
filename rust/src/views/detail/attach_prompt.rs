@@ -24,11 +24,22 @@ pub struct AttachPromptScreen {
 impl AttachPromptScreen {
     /// Create a new attach prompt with the default node.
     pub fn new(job_id: String, default_node: String) -> Self {
+        Self::with_overrides(job_id, default_node, None, None)
+    }
+
+    /// Create with optional title and placeholder overrides.
+    pub fn with_overrides(
+        job_id: String,
+        default_node: String,
+        title_override: Option<String>,
+        placeholder_override: Option<String>,
+    ) -> Self {
         Self {
             job_id,
             input: default_node,
-            title: "Attach with node override".to_string(),
-            placeholder: "node name/expression (empty to skip -w)".to_string(),
+            title: title_override.unwrap_or_else(|| "Attach with node override".to_string()),
+            placeholder: placeholder_override
+                .unwrap_or_else(|| "node name/expression (empty to skip -w)".to_string()),
         }
     }
 
@@ -311,4 +322,42 @@ mod tests {
         screen.handle_key(KeyEvent::from(KeyCode::Backspace));
         assert_eq!(screen.input, "ab");
     }
+    #[test]
+    fn test_with_overrides_custom_title_and_placeholder() {
+        let screen = AttachPromptScreen::with_overrides(
+            "".to_string(),
+            "".to_string(),
+            Some("Custom Title".to_string()),
+            Some("custom placeholder".to_string()),
+        );
+        assert_eq!(screen.title, "Custom Title");
+        assert_eq!(screen.placeholder, "custom placeholder");
+        assert_eq!(screen.job_id, "");
+        assert_eq!(screen.input, "");
+    }
+
+    #[test]
+    fn test_with_overrides_none_uses_defaults() {
+        let screen = AttachPromptScreen::with_overrides(
+            "job123".to_string(),
+            "node01".to_string(),
+            None,
+            None,
+        );
+        assert_eq!(screen.title, "Attach with node override");
+        assert_eq!(screen.placeholder, "node name/expression (empty to skip -w)");
+        assert_eq!(screen.job_id, "job123");
+        assert_eq!(screen.input, "node01");
+    }
+
+    #[test]
+    fn test_new_unchanged_behavior() {
+        // Verify that new() still works as before
+        let screen = AttachPromptScreen::new("job456".to_string(), "node02".to_string());
+        assert_eq!(screen.title, "Attach with node override");
+        assert_eq!(screen.placeholder, "node name/expression (empty to skip -w)");
+        assert_eq!(screen.job_id, "job456");
+        assert_eq!(screen.input, "node02");
+    }
+
 }

@@ -27,8 +27,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Clippy
-        # TODO(port): remove -A dead_code once the command palette wires config::save.
-        run: cargo clippy --all-targets -- -D warnings -A dead_code
+        run: cargo clippy --all-targets -- -D warnings
 
       - name: Run tests
         run: cargo test

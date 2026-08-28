@@ -120,6 +120,12 @@ pub enum Modal {
     NodeDetail(NodeDetailScreen),
     /// Job info screen (with efficiency data).
     JobInfo(JobInfoScreen),
+    /// Job ID prompt for investigation.
+    InvestigateJobPrompt(AttachPromptScreen),
+    /// Node name prompt for investigation.
+    InvestigateNodePrompt(AttachPromptScreen),
+    /// Command palette.
+    Palette(crate::views::modals::palette::PaletteState),
 }
 
 /// Messages from background refresh worker to main thread.
@@ -602,6 +608,206 @@ impl App {
         self.request_refresh();
     }
 
+    /// Execute a command from the palette.
+    fn execute_palette_command(&mut self, cmd: crate::views::modals::palette::PaletteCommand) {
+        use crate::views::modals::palette::PaletteCommand;
+        use std::collections::HashMap;
+
+        match cmd {
+            PaletteCommand::RefreshData => {
+                self.last_refresh = None;
+                self.status = Some("Refreshing...".to_string());
+            }
+            PaletteCommand::SetRefreshInterval(secs) => {
+                let interval = secs as f64;
+                self.config.interval.jobs = interval;
+                self.config.interval.nodes = interval;
+                self.config.interval.partitions = interval;
+                self.status = Some(format!("Refresh interval set to {}s", secs));
+                self.persist_theme_interval_async();
+            }
+            PaletteCommand::ToggleExpertMode => {
+                self.config.ui.expert_mode = !self.config.ui.expert_mode;
+                let new_value = self.config.ui.expert_mode;
+                self.status = Some(format!(
+                    "Expert mode: {}",
+                    if new_value { "on" } else { "off" }
+                ));
+                // Persist
+                let mut update = HashMap::new();
+                let mut ui = toml::Table::new();
+                ui.insert("expert_mode".to_string(), toml::Value::Boolean(new_value));
+                update.insert("ui".to_string(), toml::Value::Table(ui));
+                self.persist_config_async(update);
+            }
+            PaletteCommand::ToggleConfirmCancelSingle => {
+                self.config.safety.confirm_cancel_single =
+                    !self.config.safety.confirm_cancel_single;
+                let new_value = self.config.safety.confirm_cancel_single;
+                self.status = Some(format!(
+                    "Confirm single cancel: {}",
+                    if new_value { "on" } else { "off" }
+                ));
+                // Persist
+                let mut update = HashMap::new();
+                let mut safety = toml::Table::new();
+                safety.insert(
+                    "confirm_cancel_single".to_string(),
+                    toml::Value::Boolean(new_value),
+                );
+                update.insert("safety".to_string(), toml::Value::Table(safety));
+                self.persist_config_async(update);
+            }
+            PaletteCommand::ToggleConfirmBulkActions => {
+                self.config.safety.confirm_bulk_actions = !self.config.safety.confirm_bulk_actions;
+                let new_value = self.config.safety.confirm_bulk_actions;
+                self.status = Some(format!(
+                    "Confirm bulk actions: {}",
+                    if new_value { "on" } else { "off" }
+                ));
+                // Persist
+                let mut update = HashMap::new();
+                let mut safety = toml::Table::new();
+                safety.insert(
+                    "confirm_bulk_actions".to_string(),
+                    toml::Value::Boolean(new_value),
+                );
+                update.insert("safety".to_string(), toml::Value::Table(safety));
+                self.persist_config_async(update);
+            }
+            PaletteCommand::ColumnVisibility => {
+                // Open column toggle modal for current tab
+                use crate::columns::{jobs_columns, nodes_columns};
+                use crate::views::modals::column_toggle::ColumnToggleState;
+
+                match self.tab {
+                    Tab::Jobs => {
+                        let all_cols: Vec<String> =
+                            jobs_columns().iter().map(|c| c.name.clone()).collect();
+                        let hidden = self.config.columns.jobs_hidden.clone();
+                        let order = if self.config.columns.jobs_order.is_empty() {
+                            None
+                        } else {
+                            Some(self.config.columns.jobs_order.clone())
+                        };
+                        self.modal = Modal::ColumnToggle(ColumnToggleState::new(
+                            "Jobs".to_string(),
+                            all_cols,
+                            hidden,
+                            order,
+                        ));
+                    }
+                    Tab::Nodes => {
+                        let all_cols: Vec<String> =
+                            nodes_columns().iter().map(|c| c.name.clone()).collect();
+                        let hidden = self.config.columns.nodes_hidden.clone();
+                        let order = if self.config.columns.nodes_order.is_empty() {
+                            None
+                        } else {
+                            Some(self.config.columns.nodes_order.clone())
+                        };
+                        self.modal = Modal::ColumnToggle(ColumnToggleState::new(
+                            "Nodes".to_string(),
+                            all_cols,
+                            hidden,
+                            order,
+                        ));
+                    }
+                    _ => {
+                        self.status = Some("Column toggle not available for this tab".to_string());
+                    }
+                }
+            }
+            PaletteCommand::SetJobsDefaultSort(col) => {
+                let label = match col.as_str() {
+                    "" => "State priority (default)",
+                    "state" => "State",
+                    "time" => "Time used",
+                    "cpus" => "CPUs",
+                    "qos" => "QOS",
+                    _ => &col,
+                };
+                // Set the sort on the jobs view
+                if col.is_empty() {
+                    self.jobs_view.clear_sort();
+                } else {
+                    self.jobs_view.toggle_sort(&col);
+                }
+                self.status = Some(format!("Jobs sort: {}", label));
+                // Persist
+                let mut update = HashMap::new();
+                let mut view_state = toml::Table::new();
+                view_state.insert(
+                    "jobs_sort_col".to_string(),
+                    toml::Value::String(col.clone()),
+                );
+                view_state.insert(
+                    "jobs_sort_reversed".to_string(),
+                    toml::Value::Boolean(false),
+                );
+                update.insert("view_state".to_string(), toml::Value::Table(view_state));
+                self.persist_config_async(update);
+            }
+            PaletteCommand::InvestigateJobById => {
+                // Open text input prompt for job ID
+                let screen = AttachPromptScreen::with_overrides(
+                    String::new(),
+                    String::new(),
+                    Some("Job ID to investigate".to_string()),
+                    Some("job id (e.g. 12345)".to_string()),
+                );
+                self.modal = Modal::InvestigateJobPrompt(screen);
+            }
+            PaletteCommand::InvestigateNodeByName => {
+                // Open text input prompt for node name
+                let screen = AttachPromptScreen::with_overrides(
+                    String::new(),
+                    String::new(),
+                    Some("Node name to investigate".to_string()),
+                    Some("node name (e.g. gpu-a100-02)".to_string()),
+                );
+                self.modal = Modal::InvestigateNodePrompt(screen);
+            }
+            PaletteCommand::ReloadConfig => {
+                self.reload_config_from_disk();
+            }
+        }
+    }
+
+    /// Reload config from disk and apply live settings.
+    fn reload_config_from_disk(&mut self) {
+        let new_config = crate::config::load(&self.config_path);
+        let mut applied = Vec::new();
+
+        // Theme: re-apply if changed
+        let theme_changed = new_config.theme != self.config.theme;
+        if theme_changed {
+            self.config.theme = new_config.theme.clone();
+            applied.push("theme");
+        }
+
+        // Intervals: re-apply if changed
+        let intervals_changed = new_config.interval.jobs != self.config.interval.jobs
+            || new_config.interval.nodes != self.config.interval.nodes
+            || new_config.interval.partitions != self.config.interval.partitions;
+        if intervals_changed {
+            self.config.interval = new_config.interval.clone();
+            applied.push("intervals");
+        }
+
+        // Safety/expert flags
+        self.config.ui.expert_mode = new_config.ui.expert_mode;
+        self.config.safety.confirm_cancel_single = new_config.safety.confirm_cancel_single;
+        self.config.safety.confirm_bulk_actions = new_config.safety.confirm_bulk_actions;
+        applied.push("safety flags");
+
+        let summary = applied.join(" + ");
+        self.status = Some(format!(
+            "Config reloaded — applied: {}. Column visibility and order require restart.",
+            summary
+        ));
+    }
+
     /// Open confirmation modal for the pending action.
     fn open_confirm_modal(&mut self, message: String) {
         use crate::views::modals::confirm::ConfirmState;
@@ -1003,6 +1209,51 @@ impl App {
                     }
                     _ => return true,
                 },
+                Modal::InvestigateJobPrompt(state) => match state.handle_key(key_event) {
+                    DetailOutcome::Close => {
+                        self.modal = Modal::None;
+                        return true;
+                    }
+                    DetailOutcome::Value(job_id) => {
+                        self.modal = Modal::None;
+                        let job_id = job_id.trim();
+                        if !job_id.is_empty() {
+                            self.start_job_investigation(job_id.to_string());
+                        }
+                        return true;
+                    }
+                    _ => return true,
+                },
+                Modal::InvestigateNodePrompt(state) => match state.handle_key(key_event) {
+                    DetailOutcome::Close => {
+                        self.modal = Modal::None;
+                        return true;
+                    }
+                    DetailOutcome::Value(node_name) => {
+                        self.modal = Modal::None;
+                        let node_name = node_name.trim();
+                        if !node_name.is_empty() {
+                            self.start_node_investigation(node_name.to_string());
+                        }
+                        return true;
+                    }
+                    _ => return true,
+                },
+                Modal::Palette(state) => {
+                    use crate::views::modals::palette::PaletteResult;
+                    match state.handle_key(key_event, &self.config) {
+                        ModalOutcome::Dismiss(PaletteResult::None) => {
+                            self.modal = Modal::None;
+                            return true;
+                        }
+                        ModalOutcome::Dismiss(PaletteResult::Execute(cmd)) => {
+                            self.modal = Modal::None;
+                            self.execute_palette_command(cmd);
+                            return true;
+                        }
+                        ModalOutcome::Continue => return true,
+                    }
+                }
                 Modal::None => {}
             }
         }
@@ -1092,6 +1343,17 @@ impl App {
                         self.status = Some("Column toggle not available for this tab".to_string());
                     }
                 }
+                true
+            }
+            // Command palette
+            (KeyCode::Char('S'), KeyModifiers::NONE) => {
+                use crate::views::modals::palette::PaletteState;
+                self.modal = Modal::Palette(PaletteState::new(&self.config));
+                true
+            }
+            (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
+                use crate::views::modals::palette::PaletteState;
+                self.modal = Modal::Palette(PaletteState::new(&self.config));
                 true
             }
             // Keybindings help
@@ -1520,6 +1782,9 @@ fn render_modal(f: &mut ratatui::Frame, app: &mut App, area: Rect) {
         }
         Modal::NodeDetail(state) => state.render(f, area),
         Modal::JobInfo(state) => state.render(f, area),
+        Modal::InvestigateJobPrompt(state) => state.render(f, area),
+        Modal::InvestigateNodePrompt(state) => state.render(f, area),
+        Modal::Palette(state) => state.render(f, area),
         Modal::None => {}
     }
 }

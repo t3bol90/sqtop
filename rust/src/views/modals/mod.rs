@@ -37,6 +37,7 @@ pub mod confirm;
 pub mod job_actions;
 pub mod keybindings_help;
 pub mod notify;
+pub mod palette;
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
