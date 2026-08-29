@@ -2,7 +2,7 @@
 # The crates.io name is `slurm-top` because `sqtop` was already registered
 # by an unrelated project. The installed binary is still `sqtop`.
 name = "slurm-top"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.82"
 description = "A TUI dashboard for Slurm clusters - like htop, but for Slurm"

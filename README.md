@@ -14,8 +14,8 @@ Download the latest release for your platform from [Releases](https://github.com
 
 ```bash
 # Example for Linux x86_64 (glibc)
-curl -LO https://github.com/t3bol90/sqtop/releases/download/v0.2.0/sqtop-v0.2.0-x86_64-unknown-linux-gnu.tar.gz
-tar xzf sqtop-v0.2.0-x86_64-unknown-linux-gnu.tar.gz
+curl -LO https://github.com/t3bol90/sqtop/releases/download/v0.2.1/sqtop-v0.2.1-x86_64-unknown-linux-gnu.tar.gz
+tar xzf sqtop-v0.2.1-x86_64-unknown-linux-gnu.tar.gz
 sudo mv sqtop /usr/local/bin/
 ```
 
