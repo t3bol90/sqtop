@@ -229,6 +229,29 @@ pub fn parse_scontrol_kv(output: &str) -> HashMap<String, String> {
     result
 }
 
+/// Parse key=value pairs from scontrol output, preserving output order.
+///
+/// `scontrol` prints fields in a meaningful order (identity, then state, then
+/// timing), and the Python version rendered them in that order because dicts
+/// preserve insertion order. A `HashMap` does not, so detail screens use this.
+pub fn parse_scontrol_kv_ordered(output: &str) -> Vec<(String, String)> {
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+
+    for token in output.split_whitespace() {
+        if let Some((key, value)) = token.split_once('=') {
+            if key.is_empty() {
+                continue;
+            }
+            if seen.insert(key.to_string()) {
+                result.push((key.to_string(), value.to_string()));
+            }
+        }
+    }
+
+    result
+}
+
 /// Check if a value carries real Slurm content (not a null sentinel).
 pub fn is_present(value: Option<&str>) -> bool {
     match value {

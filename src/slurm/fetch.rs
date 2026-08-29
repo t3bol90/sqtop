@@ -170,11 +170,18 @@ pub fn fetch_job_detail(runner: &Runner, job_id: &str) -> HashMap<String, String
     parse_scontrol_kv(&out)
 }
 
-/// Return key=value pairs from scontrol show node <name>.
-pub fn fetch_node_detail(runner: &Runner, node_name: &str) -> HashMap<String, String> {
+/// Return key=value pairs from scontrol show job <id>, in output order.
+pub fn fetch_job_detail_ordered(runner: &Runner, job_id: &str) -> Vec<(String, String)> {
+    let cmd = format!("scontrol show job {}", job_id);
+    let (out, _, _) = runner.run_result(&cmd);
+    crate::slurm::parse::parse_scontrol_kv_ordered(&out)
+}
+
+/// Return key=value pairs from scontrol show node <name>, in output order.
+pub fn fetch_node_detail_ordered(runner: &Runner, node_name: &str) -> Vec<(String, String)> {
     let cmd = format!("scontrol show node {}", node_name);
     let (out, _, _) = runner.run_result(&cmd);
-    parse_scontrol_kv(&out)
+    crate::slurm::parse::parse_scontrol_kv_ordered(&out)
 }
 
 // ---------------------------------------------------------------------------

@@ -139,7 +139,7 @@ pub enum Msg {
     Investigation(Box<InvestigationReport>),
     JobDetail {
         job_id: String,
-        data: HashMap<String, String>,
+        fields: Vec<(String, String)>,
         efficiency: JobEfficiency,
     },
     ArrayTasks {
@@ -148,7 +148,7 @@ pub enum Msg {
     },
     NodeDetail {
         node: Node,
-        data: HashMap<String, String>,
+        fields: Vec<(String, String)>,
         jobs: Vec<Job>,
     },
     LogViewer {
@@ -328,10 +328,10 @@ impl App {
                 }
                 Msg::JobDetail {
                     job_id,
-                    data,
+                    fields,
                     efficiency,
                 } => {
-                    let mut screen = JobDetailScreen::new(job_id, data);
+                    let mut screen = JobDetailScreen::new(job_id, fields);
                     screen.set_efficiency(efficiency);
                     self.modal = Modal::JobDetail(screen);
                     self.status = None;
@@ -341,8 +341,8 @@ impl App {
                     self.modal = Modal::ArrayTasks(screen);
                     self.status = None;
                 }
-                Msg::NodeDetail { node, data, jobs } => {
-                    let mut screen = NodeDetailScreen::new(node, data);
+                Msg::NodeDetail { node, fields, jobs } => {
+                    let mut screen = NodeDetailScreen::new(node, fields);
                     screen.set_jobs(jobs);
                     self.modal = Modal::NodeDetail(screen);
                     self.status = None;
@@ -472,11 +472,11 @@ impl App {
         let job_id_clone = job_id.clone();
 
         std::thread::spawn(move || {
-            let data = fetch::fetch_job_detail(&runner, &job_id_clone);
+            let fields = fetch::fetch_job_detail_ordered(&runner, &job_id_clone);
             let efficiency = fetch::fetch_job_efficiency(&runner, &job_id_clone);
             let _ = tx.send(Msg::JobDetail {
                 job_id: job_id_clone,
-                data,
+                fields,
                 efficiency,
             });
         });
@@ -537,9 +537,9 @@ impl App {
             let tx = self.msg_tx.clone();
 
             std::thread::spawn(move || {
-                let data = fetch::fetch_node_detail(&runner, &node_name);
+                let fields = fetch::fetch_node_detail_ordered(&runner, &node_name);
                 let jobs = fetch::fetch_jobs_on_node(&runner, &node_name);
-                let _ = tx.send(Msg::NodeDetail { node, data, jobs });
+                let _ = tx.send(Msg::NodeDetail { node, fields, jobs });
             });
         } else {
             self.status = Some("Node not found".to_string());
@@ -2494,7 +2494,6 @@ mod modal_tests {
     #[test]
     fn test_copy_modal_uses_label() {
         use crate::views::detail::job_detail::JobDetailScreen;
-        use std::collections::HashMap;
 
         let config = Config::default();
         let mut app = App::new(config, std::path::PathBuf::from("/tmp/test_config.toml"));
@@ -2515,8 +2514,7 @@ mod modal_tests {
             nodelist: "node01".to_string(),
             qos: "normal".to_string(),
         };
-        let detail = HashMap::new();
-        let screen = JobDetailScreen::new(job.job_id.clone(), detail);
+        let screen = JobDetailScreen::new(job.job_id.clone(), Vec::new());
         app.modal = Modal::JobDetail(screen);
 
         // Note: Actual copy testing would require mocking clipboard which we skip

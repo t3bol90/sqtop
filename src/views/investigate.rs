@@ -154,6 +154,10 @@ pub fn render(f: &mut Frame, area: Rect, screen: &mut InvestigationScreen) {
         height: dialog_height,
     };
 
+    // Clear the cells first. A Block only restyles them, so without this the
+    // table underneath stays visible through the dialog.
+    f.render_widget(ratatui::widgets::Clear, dialog_rect);
+
     // Split dialog into title and content
     let chunks = Layout::default()
         .direction(Direction::Vertical)

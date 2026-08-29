@@ -10,12 +10,11 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
-use std::collections::HashMap;
 
 /// Node detail viewer.
 pub struct NodeDetailScreen {
     node: Node,
-    data: HashMap<String, String>,
+    fields: Vec<(String, String)>,
     scroll_offset: usize,
     lines: Vec<String>,
     jobs: Vec<Job>,
@@ -23,11 +22,11 @@ pub struct NodeDetailScreen {
 
 impl NodeDetailScreen {
     /// Create a new node detail screen.
-    pub fn new(node: Node, data: HashMap<String, String>) -> Self {
-        let lines = build_detail_lines(&node, &data);
+    pub fn new(node: Node, fields: Vec<(String, String)>) -> Self {
+        let lines = build_detail_lines(&node, &fields);
         Self {
             node,
-            data,
+            fields,
             scroll_offset: 0,
             lines,
             jobs: Vec::new(),
@@ -38,7 +37,7 @@ impl NodeDetailScreen {
     pub fn set_jobs(&mut self, jobs: Vec<Job>) {
         self.jobs = jobs;
         // Rebuild lines to include jobs
-        self.lines = build_detail_lines_with_jobs(&self.node, &self.data, &self.jobs);
+        self.lines = build_detail_lines_with_jobs(&self.node, &self.fields, &self.jobs);
     }
 
     /// Handle key input.
@@ -84,6 +83,9 @@ impl NodeDetailScreen {
                     .add_modifier(Modifier::BOLD),
             )
             .style(Style::default().bg(Color::Black));
+        // Clear the cells first. A Block only restyles them, so without this the
+        // table underneath stays visible through the dialog.
+        f.render_widget(ratatui::widgets::Clear, dialog_area);
         f.render_widget(block.clone(), dialog_area);
 
         // Inner layout
@@ -130,43 +132,19 @@ impl NodeDetailScreen {
     }
 }
 
-fn build_detail_lines(_node: &Node, data: &HashMap<String, String>) -> Vec<String> {
-    build_detail_lines_with_jobs(_node, data, &[])
+fn build_detail_lines(node: &Node, fields: &[(String, String)]) -> Vec<String> {
+    build_detail_lines_with_jobs(node, fields, &[])
 }
 
 fn build_detail_lines_with_jobs(
     _node: &Node,
-    data: &HashMap<String, String>,
+    fields: &[(String, String)],
     jobs: &[Job],
 ) -> Vec<String> {
+    // scontrol order, matching the Python version. See job_detail.rs.
     let mut lines = vec!["Node Detail\n".to_string()];
-
-    // Highlight keys (shown first)
-    let highlight_keys = [
-        "NodeName",
-        "State",
-        "CPUTot",
-        "CPUAlloc",
-        "RealMemory",
-        "FreeMem",
-        "OS",
-        "Arch",
-        "CfgTRES",
-        "AllocTRES",
-        "Reason",
-    ];
-
-    for key in &highlight_keys {
-        if let Some(value) = data.get(*key) {
-            lines.push(format!("  {}: {}", key, value));
-        }
-    }
-
-    // Other keys
-    for (k, v) in data {
-        if !highlight_keys.contains(&k.as_str()) {
-            lines.push(format!("  {}: {}", k, v));
-        }
+    for (k, v) in fields {
+        lines.push(format!("  {}: {}", k, v));
     }
 
     // Jobs section
@@ -206,14 +184,15 @@ mod tests {
             state: "idle".to_string(),
             ..Default::default()
         };
-        let mut data = HashMap::new();
-        data.insert("NodeName".to_string(), "node01".to_string());
-        data.insert("State".to_string(), "idle".to_string());
-        data.insert("CPUTot".to_string(), "32".to_string());
+        let fields = vec![
+            ("NodeName".to_string(), "node01".to_string()),
+            ("State".to_string(), "idle".to_string()),
+            ("CPUTot".to_string(), "32".to_string()),
+        ];
 
-        let lines = build_detail_lines(&node, &data);
-        assert!(lines.iter().any(|l| l.contains("NodeName: node01")));
-        assert!(lines.iter().any(|l| l.contains("State: idle")));
-        assert!(lines.iter().any(|l| l.contains("CPUTot: 32")));
+        let lines = build_detail_lines(&node, &fields);
+        assert_eq!(lines[1], "  NodeName: node01");
+        assert_eq!(lines[2], "  State: idle");
+        assert_eq!(lines[3], "  CPUTot: 32");
     }
 }

@@ -63,6 +63,9 @@ impl ArrayTaskScreen {
                     .add_modifier(Modifier::BOLD),
             )
             .style(Style::default().bg(Color::Black));
+        // Clear the cells first. A Block only restyles them, so without this the
+        // table underneath stays visible through the dialog.
+        f.render_widget(ratatui::widgets::Clear, dialog_area);
         f.render_widget(block.clone(), dialog_area);
 
         // Inner layout
