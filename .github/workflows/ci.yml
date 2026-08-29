@@ -7,8 +7,15 @@ on:
 
 jobs:
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    # macOS is included because parts of the code are macOS-only (AppleScript
+    # notifications, pbcopy). Linting only on Linux let dead macOS-gated code
+    # through, and shipping macOS binaries untested is worse.
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
 

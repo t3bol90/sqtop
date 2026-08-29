@@ -52,6 +52,12 @@ fn send_notification(_title: &str, _message: &str) -> Result<(), Box<dyn std::er
     Ok(())
 }
 
+/// Escape a string for embedding in an AppleScript literal.
+///
+/// macOS-only: this exists solely for the `osascript` path, so it is compiled
+/// only there. Without the gate it is dead code on Linux and fails the lint
+/// gate, which is how CI caught it.
+#[cfg(target_os = "macos")]
 fn escape_applescript(s: &str) -> String {
     s.replace('\\', r#"\\"#).replace('"', r#"\""#)
 }
@@ -60,11 +66,13 @@ fn escape_applescript(s: &str) -> String {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn test_escape_applescript_quotes() {
         assert_eq!(escape_applescript(r#"hello "world""#), r#"hello \"world\""#);
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn test_escape_applescript_backslashes() {
         assert_eq!(escape_applescript(r#"path\to\file"#), r#"path\\to\\file"#);
