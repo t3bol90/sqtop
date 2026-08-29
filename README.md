@@ -24,8 +24,12 @@ Available targets: `x86_64-unknown-linux-gnu`, `x86_64-unknown-linux-musl` (for 
 ### Option 2: install from crates.io
 
 ```bash
-cargo install sqtop
+cargo install slurm-top
 ```
+
+The crate is published as **`slurm-top`** because the name `sqtop` was already
+taken on crates.io by an unrelated project. The installed command is still
+`sqtop`.
 
 **Python version (v0.1.x, retired):**
 

@@ -1,5 +1,7 @@
 [package]
-name = "sqtop"
+# The crates.io name is `slurm-top` because `sqtop` was already registered
+# by an unrelated project. The installed binary is still `sqtop`.
+name = "slurm-top"
 version = "0.2.0"
 edition = "2021"
 rust-version = "1.82"
