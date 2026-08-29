@@ -2,7 +2,7 @@
 
 `sqtop` is a TUI dashboard for Slurm clusters.
 
-![](assets/demo.png)
+![sqtop](https://raw.githubusercontent.com/t3bol90/sqtop/main/assets/demo.png)
 
 ## Install
 

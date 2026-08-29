@@ -5,7 +5,19 @@ edition = "2021"
 rust-version = "1.82"
 description = "A TUI dashboard for Slurm clusters - like htop, but for Slurm"
 repository = "https://github.com/t3bol90/sqtop"
+homepage = "https://github.com/t3bol90/sqtop"
 license = "MIT"
+readme = "README.md"
+keywords = ["slurm", "tui", "hpc", "cluster", "monitoring"]
+categories = ["command-line-utilities"]
+exclude = [
+    "assets/",
+    "bin/",
+    "slurm-cluster/",
+    "slurm-docker-upstream/",
+    "SPEC.md",
+    "CLAUDE.md",
+]
 
 [[bin]]
 name = "sqtop"
