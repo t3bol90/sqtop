@@ -156,7 +156,7 @@ impl JobDetailScreen {
 }
 
 fn build_detail_lines(_job_id: &str, data: &HashMap<String, String>) -> Vec<String> {
-    let mut lines = vec![format!("Job Detail\n")];
+    let mut lines = vec!["Job Detail\n".to_string()];
 
     // Highlight keys (shown first)
     let highlight_keys = [

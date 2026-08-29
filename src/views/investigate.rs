@@ -65,7 +65,7 @@ impl InvestigationScreen {
 
     /// Scroll down by the given number of lines.
     pub fn scroll_down(&mut self, amount: u16) {
-        let max_offset = self.report_lines.len().saturating_sub(1).max(0) as u16;
+        let max_offset = self.report_lines.len().saturating_sub(1) as u16;
         self.scroll_offset = (self.scroll_offset + amount).min(max_offset);
     }
 
@@ -81,7 +81,7 @@ impl InvestigationScreen {
 
     /// Scroll to the bottom.
     pub fn scroll_to_bottom(&mut self) {
-        let max_offset = self.report_lines.len().saturating_sub(1).max(0) as u16;
+        let max_offset = self.report_lines.len().saturating_sub(1) as u16;
         self.scroll_offset = max_offset;
     }
 
@@ -192,11 +192,7 @@ pub fn render(f: &mut Frame, area: Rect, screen: &mut InvestigationScreen) {
     let visible_height = inner.height as usize;
 
     // Clamp scroll offset
-    let max_scroll = screen
-        .report_lines
-        .len()
-        .saturating_sub(visible_height)
-        .max(0);
+    let max_scroll = screen.report_lines.len().saturating_sub(visible_height);
     screen.scroll_offset = (screen.scroll_offset as usize).min(max_scroll) as u16;
 
     let start = screen.scroll_offset as usize;

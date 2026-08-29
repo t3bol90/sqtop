@@ -139,7 +139,7 @@ fn build_detail_lines_with_jobs(
     data: &HashMap<String, String>,
     jobs: &[Job],
 ) -> Vec<String> {
-    let mut lines = vec![format!("Node Detail\n")];
+    let mut lines = vec!["Node Detail\n".to_string()];
 
     // Highlight keys (shown first)
     let highlight_keys = [

@@ -137,7 +137,7 @@ pub fn allocate_columns(
     }
 
     // Step 2: work in priority-descending order.
-    eligible.sort_by(|a, b| b.priority.cmp(&a.priority));
+    eligible.sort_by_key(|c| std::cmp::Reverse(c.priority));
 
     // Step 3 (Pass 1): assign minimum widths.
     let mut assigned: std::collections::HashMap<String, u16> = eligible

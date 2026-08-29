@@ -6,8 +6,32 @@ on:
       - 'v*'
 
 jobs:
+  create-release:
+    name: Create release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # needed so the annotated tag message is available
+
+      # The upload job runs once per target in parallel. Creating the release
+      # here first avoids five jobs racing to create the same release, which
+      # made every one of them fail with "release not found".
+      - name: Create release if it does not exist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
+              --notes-from-tag
+          fi
+
   release:
     name: Release ${{ matrix.target }}
+    needs: create-release
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write

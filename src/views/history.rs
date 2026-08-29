@@ -269,14 +269,10 @@ impl HistoryView {
                 }
                 true
             }
-            (KeyCode::Esc, KeyModifiers::NONE) => {
-                // Exit visual mode or dismiss (handled at app level for dismiss)
-                if self.visual_selection.is_active() {
-                    self.visual_selection.exit();
-                    true
-                } else {
-                    false
-                }
+            // Exit visual mode. Dismiss is handled at app level.
+            (KeyCode::Esc, KeyModifiers::NONE) if self.visual_selection.is_active() => {
+                self.visual_selection.exit();
+                true
             }
             _ => false,
         }
